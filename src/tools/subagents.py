@@ -5,6 +5,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from config.settings import PROJECT_ROOT
+
 
 @dataclass
 class SubAgent:
@@ -35,9 +37,13 @@ class SubAgentManager:
         return aid
 
     async def _run_agent(self, aid: str, script_path: str, args: list[str]):
+        p = Path(script_path)
+        if not p.is_absolute():
+            p = PROJECT_ROOT / script_path
+        resolved = str(p.resolve())
         try:
             proc = await asyncio.create_subprocess_exec(
-                "python", script_path, *args,
+                "python", resolved, *args,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
             )
@@ -58,3 +64,16 @@ class SubAgentManager:
         if not self.agents:
             return "No sub-agents running"
         return "\n".join(f"{a.id}: {a.task} - {a.status}" for a in self.agents.values())
+
+    def stop_all(self) -> int:
+        """Terminate all running sub-agents. Returns count stopped."""
+        stopped = 0
+        for a in list(self.agents.values()):
+            if a.process and a.process.returncode is None:
+                try:
+                    a.process.terminate()
+                    stopped += 1
+                    a.status = "stopped"
+                except ProcessLookupError:
+                    pass
+        return stopped

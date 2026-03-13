@@ -1,26 +1,45 @@
-"""FastAPI app: dashboard, chat, voice."""
+"""FastAPI app: dashboard, chat, voice, Discord, notifications."""
+import asyncio
 import base64
+import json
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, UploadFile, File, Form
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from config.settings import WEB_HOST, WEB_PORT
+from src.agent import core as agent_core
 from src.agent.core import AssistiveAgent
+from src.tools import tool_queue
 from src.voice.stt import transcribe_audio
 from src.voice.tts import synthesize
 
 # Global agent instance
 agent: AssistiveAgent | None = None
+_discord_task: asyncio.Task | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global agent
+    global agent, _discord_task
     agent = AssistiveAgent(user_id="default")
+    # Start Discord bot (and outreach consumer) if configured
+    try:
+        from src.discord_bot import set_agent, start_discord_task
+
+        set_agent(agent)
+        _discord_task = start_discord_task()
+    except Exception as e:
+        print(f"Discord bot not started: {e}")
     yield
+    if _discord_task and not _discord_task.done():
+        _discord_task.cancel()
+        try:
+            await _discord_task
+        except asyncio.CancelledError:
+            pass
     agent = None
 
 
@@ -42,15 +61,43 @@ async def index():
         return f.read()
 
 
+async def _stream_chat_generator(message: str):
+    """Stream narration events then final response as SSE."""
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def run_agent():
+        try:
+            agent.memory.set_working("current_speaker_discord_id", None)
+            ctx = "[Travis is messaging from the web app (desktop, at home).]\n\n"
+            result = await agent.chat(ctx + message, narrate_queue=queue)
+            await queue.put({"type": "response", "text": result})
+        except Exception as e:
+            await queue.put({"type": "error", "text": str(e)})
+        finally:
+            await queue.put(None)
+
+    asyncio.create_task(run_agent())
+
+    while True:
+        item = await queue.get()
+        if item is None:
+            break
+        yield f"data: {json.dumps(item)}\n\n"
+
+
 @app.post("/api/chat")
 async def api_chat(message: str = Form(...)):
     if not agent:
         return JSONResponse({"error": "Agent not ready"}, status_code=503)
-    try:
-        response = await agent.chat(message)
-        return {"response": response}
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+    return StreamingResponse(
+        _stream_chat_generator(message),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.post("/api/transcribe")
@@ -65,6 +112,98 @@ async def api_transcribe(audio: UploadFile = File(...)):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+@app.get("/api/tool-queue")
+async def api_tool_queue():
+    return tool_queue.get_queue()
+
+
+@app.get("/api/memory-view")
+async def api_memory_view():
+    """Return profile, episodic memories, and working memory for the knowledge viewer."""
+    if not agent:
+        return JSONResponse({"error": "Agent not ready"}, status_code=503)
+    m = agent.memory
+    return {
+        "profile": m.get_profile_view(),
+        "episodic": m.get_episodic_view(),
+        "working": m.get_working_view(),
+        "thoughts": m.get_thoughts_view(),
+    }
+
+
+@app.post("/api/tool-approve")
+async def api_tool_approve(tool_id: str = Form(...)):
+    return {"result": tool_queue.approve_tool(tool_id)}
+
+
+@app.post("/api/tool-reject")
+async def api_tool_reject(tool_id: str = Form(...)):
+    return {"result": tool_queue.reject_tool(tool_id)}
+
+
+@app.post("/api/tool-reload")
+async def api_tool_reload():
+    if agent:
+        agent._reload_dynamic()
+    return {"result": "Tools reloaded"}
+
+
+@app.post("/api/subagents-stop-all")
+async def api_subagents_stop_all():
+    """Stop all running sub-agents."""
+    mgr = agent_core._get_subagent_manager()
+    n = mgr.stop_all()
+    return {"result": f"Stopped {n} sub-agent(s)"}
+
+
+async def _notification_sse_generator():
+    """SSE stream for notifications (Discord messages, proactive outreach)."""
+    from src.notifications import get_notification_queue, NotificationEvent
+
+    q = get_notification_queue()
+    while True:
+        try:
+            ev = await asyncio.wait_for(q.get(), timeout=30.0)
+            if isinstance(ev, NotificationEvent):
+                payload = {
+                    "type": ev.type,
+                    "title": ev.title,
+                    "body": ev.body,
+                    "meta": ev.meta or {},
+                    "ts": ev.created_at,
+                }
+                yield f"data: {json.dumps(payload)}\n\n"
+        except asyncio.TimeoutError:
+            yield "data: {\"type\":\"ping\"}\n\n"
+
+
+@app.get("/api/notifications/stream")
+async def api_notifications_stream():
+    """SSE stream: Discord messages, proactive messages, etc."""
+    return StreamingResponse(
+        _notification_sse_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.get("/api/contacts")
+async def api_contacts():
+    """Get all contacts (friends, Discord users)."""
+    from src import contacts
+
+    return {"contacts": contacts.get_all_contacts()}
+
+
+@app.get("/api/access-policy")
+async def api_get_access_policy():
+    """Get access policy (tools per tier). Edit data/profiles/default/access_policy.json to change."""
+    from config.access_policy import _load_policy, DEFAULT_POLICY, CONTACT_TIERS
+
+    policy = _load_policy()
+    return {"policy": policy, "tiers": list(CONTACT_TIERS)}
+
+
 @app.post("/api/speak")
 async def api_speak(text: str = Form(...)):
     """Convert text to speech, return base64 mp3."""
@@ -77,7 +216,16 @@ async def api_speak(text: str = Form(...)):
 
 
 def run():
+    import socket
     import uvicorn
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        local_ip = s.getsockname()[0]
+        s.close()
+        print(f"\n  Mobile: http://{local_ip}:{WEB_PORT}\n")
+    except Exception:
+        pass
     uvicorn.run(app, host=WEB_HOST, port=WEB_PORT)
 
 

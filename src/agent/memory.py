@@ -1,72 +1,171 @@
-"""Five-layer memory system for the assistive agent."""
+"""Five-layer memory system for the assistive agent. Persists profile and short-term across sessions."""
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from config.settings import MEMORY_DIR, USER_PROFILES_DIR
+from config.settings import USER_PROFILES_DIR
+
+PROFILE_CATEGORIES = ("background", "work", "preferences", "personal", "other")
 
 
 @dataclass
 class MemoryEntry:
     """Single memory entry."""
     content: str
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        return {"content": self.content, "timestamp": self.timestamp, "metadata": self.metadata}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "MemoryEntry":
+        return cls(
+            content=d.get("content", ""),
+            timestamp=d.get("timestamp", ""),
+            metadata=d.get("metadata", {}),
+        )
 
 
 class MemoryStore:
-    """5-layer memory: immediate, short-term, working, episodic, user profile."""
+    """5-layer memory: immediate, short-term (persisted), working, episodic, user profile (persisted)."""
 
     def __init__(self, user_id: str = "default"):
         self.user_id = user_id
         self.user_dir = USER_PROFILES_DIR / user_id
         self.user_dir.mkdir(parents=True, exist_ok=True)
 
-        # Layer 1: Immediate (current turn)
         self.immediate: list[MemoryEntry] = []
-
-        # Layer 2: Short-term (last N turns)
         self.short_term: list[MemoryEntry] = []
-        self.short_term_max = 20
-
-        # Layer 3: Working (active task state)
+        self.short_term_max = 30
         self.working: dict[str, Any] = {}
 
-        # Layer 4: Episodic (past sessions - persisted)
+        self.short_term_path = self.user_dir / "short_term.jsonl"
         self.episodic_path = self.user_dir / "episodic.jsonl"
-
-        # Layer 5: User profile (persisted)
         self.profile_path = self.user_dir / "profile.json"
+        self.working_path = self.user_dir / "working.json"
+        self.thoughts_path = self.user_dir / "thoughts.jsonl"
 
-    def add_immediate(self, content: str, **metadata):
+        self._load_short_term()
+        self._load_working()
+
+    def _load_short_term(self) -> None:
+        """Load short-term from disk so it survives restarts."""
+        if not self.short_term_path.exists():
+            return
+        try:
+            with open(self.short_term_path, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        d = json.loads(line)
+                        self.short_term.append(MemoryEntry.from_dict(d))
+                    except json.JSONDecodeError:
+                        continue
+            # Keep only the most recent
+            if len(self.short_term) > self.short_term_max:
+                self.short_term = self.short_term[-self.short_term_max :]
+        except OSError:
+            pass
+
+    def _save_short_term(self) -> None:
+        with open(self.short_term_path, "w", encoding="utf-8") as f:
+            for e in self.short_term:
+                f.write(json.dumps(e.to_dict(), ensure_ascii=False) + "\n")
+
+    def _load_working(self) -> None:
+        if not self.working_path.exists():
+            return
+        try:
+            with open(self.working_path, encoding="utf-8") as f:
+                self.working = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    def _save_working(self) -> None:
+        if not self.working:
+            if self.working_path.exists():
+                self.working_path.unlink()
+            return
+        with open(self.working_path, "w", encoding="utf-8") as f:
+            json.dump(self.working, f, indent=2)
+
+    def add_immediate(self, content: str, **metadata: Any) -> None:
         self.immediate.append(MemoryEntry(content=content, metadata=metadata))
 
-    def add_short_term(self, content: str, **metadata):
+    def _is_blank_user_input(self, content: str) -> bool:
+        c = (content or "").strip()
+        return not c or c in ("User:", "User") or (c.startswith("User:") and not c[5:].strip())
+
+    def add_short_term(self, content: str, **metadata: Any) -> None:
+        if self._is_blank_user_input(content):
+            return
         self.short_term.append(MemoryEntry(content=content, metadata=metadata))
-        if len(self.short_term) > self.short_term_max:
-            # Promote oldest to episodic
+        while len(self.short_term) > self.short_term_max:
             old = self.short_term.pop(0)
             self._append_episodic(old.content, old.metadata)
+        self._save_short_term()
 
-    def set_working(self, key: str, value: Any):
+    def set_working(self, key: str, value: Any) -> None:
         if value is None:
             self.working.pop(key, None)
         else:
             self.working[key] = value
+        self._save_working()
 
-    def get_working(self, key: str, default=None):
+    def get_working(self, key: str, default: Any = None) -> Any:
         return self.working.get(key, default)
 
-    def clear_immediate(self):
+    def clear_immediate(self) -> None:
         self.immediate.clear()
 
-    def _load_recent_episodic(self, max_lines: int = 15) -> str | None:
-        """Load recent episodic entries for context."""
+    def _append_episodic(self, content: str, metadata: dict) -> None:
+        if self._is_blank_user_input(content):
+            return
+        with open(self.episodic_path, "a", encoding="utf-8") as f:
+            f.write(
+                json.dumps(
+                    {"content": content, "metadata": metadata, "ts": datetime.now().isoformat()},
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+
+    def add_profile_fact(self, category: str, fact: str) -> str:
+        """Add a fact to the user profile. Category: background, work, preferences, personal, other."""
+        cat = category.lower() if category else "other"
+        if cat not in PROFILE_CATEGORIES:
+            cat = "other"
+        data = self._load_profile_data()
+        facts = data.setdefault("facts", {})
+        lst = facts.setdefault(cat, [])
+        fact = fact.strip()
+        if not fact:
+            return "Empty fact, not stored."
+        if fact not in lst:
+            lst.append(fact)
+        data["updated"] = datetime.now().isoformat()
+        with open(self.profile_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        return f"Stored in profile ({cat})."
+
+    def _load_profile_data(self) -> dict:
+        if not self.profile_path.exists():
+            return {"facts": {}, "summary": "", "updated": ""}
+        try:
+            with open(self.profile_path, encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return {"facts": {}, "summary": "", "updated": ""}
+
+    def _load_recent_episodic(self, max_lines: int = 20) -> str | None:
         if not self.episodic_path.exists():
             return None
-        import json
-        lines = []
+        lines: list[str] = []
         try:
             with open(self.episodic_path, encoding="utf-8") as f:
                 all_lines = f.readlines()
@@ -75,8 +174,8 @@ class MemoryStore:
                 if not line:
                     continue
                 try:
-                    data = json.loads(line)
-                    lines.append(data.get("content", ""))
+                    d = json.loads(line)
+                    lines.append(d.get("content", ""))
                 except json.JSONDecodeError:
                     continue
         except OSError:
@@ -85,9 +184,49 @@ class MemoryStore:
             return None
         return "\n".join(f"- {c}" for c in lines)
 
-    def get_context_for_agent(self, max_immediate: int = 5, max_short: int = 15) -> str:
-        """Build context string for the agent from all 5 layers."""
-        parts = []
+    def _load_recent_thoughts(self, max_lines: int = 8) -> str | None:
+        """Load recent background thoughts for context."""
+        if not self.thoughts_path.exists():
+            return None
+        lines_list: list[str] = []
+        try:
+            with open(self.thoughts_path, encoding="utf-8") as f:
+                all_lines = f.readlines()
+            for line in all_lines[-max_lines:]:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    d = json.loads(line)
+                    lines_list.append(d.get("content", ""))
+                except json.JSONDecodeError:
+                    continue
+        except OSError:
+            return None
+        if not lines_list:
+            return None
+        return "\n".join(f"- {c}" for c in lines_list)
+
+    def append_thought(self, content: str) -> None:
+        """Append a background thought (called by background_thoughts module)."""
+        with open(self.thoughts_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"content": content, "ts": datetime.now().isoformat()}, ensure_ascii=False) + "\n")
+
+    def _format_profile(self, data: dict) -> str:
+        parts: list[str] = []
+        facts = data.get("facts", {})
+        for cat in PROFILE_CATEGORIES:
+            items = facts.get(cat, [])
+            if items:
+                label = cat.replace("_", " ").title()
+                parts.append(f"{label}: " + "; ".join(items))
+        summary = (data.get("summary") or "").strip()
+        if summary:
+            parts.append("Summary: " + summary)
+        return "\n".join(parts) if parts else ""
+
+    def get_context_for_agent(self, max_immediate: int = 5, max_short: int = 20) -> str:
+        parts: list[str] = []
 
         if self.immediate:
             recent = self.immediate[-max_immediate:]
@@ -99,7 +238,8 @@ class MemoryStore:
             recent = self.short_term[-max_short:]
             parts.append("\n## Recent conversation")
             for e in recent:
-                parts.append(f"- [{e.timestamp.isoformat()}] {e.content}")
+                ts = e.timestamp[:19] if e.timestamp else ""
+                parts.append(f"- [{ts}] {e.content}")
 
         if self.working:
             parts.append("\n## Working memory (active task)")
@@ -111,27 +251,65 @@ class MemoryStore:
             parts.append("\n## Episodic memory (past sessions)")
             parts.append(episodic)
 
-        profile = self._load_profile()
+        thoughts = self._load_recent_thoughts()
+        if thoughts:
+            parts.append("\n## Your recent background thoughts")
+            parts.append(thoughts)
+
+        data = self._load_profile_data()
+        profile = self._format_profile(data)
         if profile:
-            parts.append("\n## User profile")
+            parts.append("\n## User profile (remember this person)")
             parts.append(profile)
 
         return "\n".join(parts) if parts else ""
 
-    def _append_episodic(self, content: str, metadata: dict):
-        with open(self.episodic_path, "a", encoding="utf-8") as f:
-            import json
-            f.write(json.dumps({"content": content, "metadata": metadata, "ts": datetime.now().isoformat()}) + "\n")
+    def get_profile_view(self) -> dict:
+        """Return profile data for UI: facts by category, updated timestamp."""
+        return self._load_profile_data()
 
-    def _load_profile(self) -> str | None:
-        if not self.profile_path.exists():
-            return None
-        import json
-        with open(self.profile_path, encoding="utf-8") as f:
-            return json.load(f).get("summary", "")
+    def get_episodic_view(self, max_items: int = 100) -> list[dict]:
+        """Return episodic entries for UI: content, timestamp."""
+        if not self.episodic_path.exists():
+            return []
+        entries: list[dict] = []
+        try:
+            with open(self.episodic_path, encoding="utf-8") as f:
+                lines = f.readlines()
+            for line in reversed(lines[-max_items:]):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    d = json.loads(line)
+                    entries.insert(0, {"content": d.get("content", ""), "ts": d.get("ts", "")})
+                except json.JSONDecodeError:
+                    continue
+        except OSError:
+            pass
+        return entries
 
-    def update_profile(self, summary: str):
-        import json
-        data = {"summary": summary, "updated": datetime.now().isoformat()}
-        with open(self.profile_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+    def get_working_view(self) -> dict:
+        """Return working memory for UI."""
+        return dict(self.working)
+
+    def get_thoughts_view(self, max_items: int = 50) -> list[dict]:
+        """Return background thoughts for UI."""
+        if not self.thoughts_path.exists():
+            return []
+        entries: list[dict] = []
+        try:
+            with open(self.thoughts_path, encoding="utf-8") as f:
+                lines = f.readlines()
+            for line in reversed(lines[-max_items:]):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    d = json.loads(line)
+                    entries.insert(0, {"content": d.get("content", ""), "ts": d.get("ts", "")})
+                except json.JSONDecodeError:
+                    continue
+        except OSError:
+            pass
+        return entries

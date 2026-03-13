@@ -49,22 +49,81 @@ async def list_dir(path: str) -> str:
 async def run_command(cmd: str, cwd: str | None = None, timeout: int = 60) -> str:
     """Run shell command. Use carefully."""
     try:
-        result = await asyncio.wait_for(
-            asyncio.create_subprocess_shell(
-                cmd,
-                cwd=cwd or os.getcwd(),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            ),
-            timeout=timeout,
+        proc = await asyncio.create_subprocess_shell(
+            cmd,
+            cwd=cwd or os.getcwd(),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
-        out = (result.stdout or b"").decode("utf-8", errors="replace").strip()
-        err = (result.stderr or b"").decode("utf-8", errors="replace").strip()
+        out_bytes, err_bytes = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        out = (out_bytes or b"").decode("utf-8", errors="replace").strip()
+        err = (err_bytes or b"").decode("utf-8", errors="replace").strip()
         if err:
-            return f"stdout:\n{out}\n\nstderr:\n{err}\n\nexit: {result.returncode}"
-        return f"{out}\n\nexit: {result.returncode}"
+            return f"stdout:\n{out}\n\nstderr:\n{err}\n\nexit: {proc.returncode}"
+        return f"{out}\n\nexit: {proc.returncode}"
     except asyncio.TimeoutError:
         return "Error: Command timed out"
+    except Exception as e:
+        return f"Error: {e}"
+
+
+async def list_processes(max_lines: int = 50) -> str:
+    """List running processes. Works on Windows and Unix."""
+    try:
+        if platform.system() == "Windows":
+            proc = await asyncio.create_subprocess_shell(
+                'powershell -NoProfile -Command "Get-Process | Select-Object Name, Id, CPU, WorkingSet | Sort-Object CPU -Descending | Format-Table -AutoSize"',
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        else:
+            proc = await asyncio.create_subprocess_shell(
+                "ps aux",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        out, err = await proc.communicate()
+        text = (out or b"").decode("utf-8", errors="replace").strip()
+        if err:
+            err_text = (err or b"").decode("utf-8", errors="replace").strip()
+            if err_text and "Error" in err_text:
+                # Fallback: tasklist on Windows
+                if platform.system() == "Windows":
+                    proc2 = await asyncio.create_subprocess_shell(
+                        "tasklist /FO TABLE",
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    out2, _ = await proc2.communicate()
+                    text = (out2 or b"").decode("utf-8", errors="replace").strip()
+                else:
+                    return f"Error: {err_text}"
+        lines = text.splitlines()
+        if max_lines and len(lines) > max_lines:
+            lines = lines[:max_lines]
+            text = "\n".join(lines) + f"\n... ({max_lines} of many shown)"
+        return text
+    except Exception as e:
+        return f"Error listing processes: {e}"
+
+
+async def is_process_running(name: str) -> str:
+    """Check if a process is running by name (case-insensitive, partial match). Returns PID(s) or 'not found'."""
+    try:
+        if platform.system() == "Windows":
+            cmd = f'powershell -NoProfile -Command "Get-Process | Where-Object {{ $_.ProcessName -like \'*{name}*\' }} | Select-Object Name, Id | Format-Table -AutoSize"'
+        else:
+            cmd = f"pgrep -fl {name}" if name else "echo 'provide name'"
+        proc = await asyncio.create_subprocess_shell(
+            cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        out, err = await proc.communicate()
+        text = (out or b"").decode("utf-8", errors="replace").strip()
+        if not text or "Error" in (err or b"").decode("utf-8", errors="replace"):
+            return f"Process matching '{name}': not found"
+        return f"Process matching '{name}':\n{text}"
     except Exception as e:
         return f"Error: {e}"
 

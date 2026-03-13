@@ -1,14 +1,18 @@
 """Core agent: Grok 3 client, tool routing, Doctor Mode integration."""
+import asyncio
 import json
+import random
 from typing import Any
 
 from openai import AsyncOpenAI
 
-from config.settings import XAI_API_KEY, XAI_BASE_URL, XAI_MODEL
+from config.settings import XAI_API_KEY, XAI_BASE_URL, XAI_MODEL, DISCORD_OWNER_ID
 from src.agent.dag import DAGOrchestrator
 from src.agent.doctor_mode import DoctorMode, FailureEvent, FailureKind
 from src.agent.memory import MemoryStore
-from src.tools import system, build, subagents, search
+from src import contacts, notifications
+from src.tools import system, build, subagents, search, cursor_cli, knowledge, tool_queue
+from src.tools.dynamic_loader import load_dynamic_tools
 
 # Lazy sub-agent manager
 _subagent_manager: subagents.SubAgentManager | None = None
@@ -80,6 +84,30 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
+            "name": "is_process_running",
+            "description": "Check if a process is running by name (partial match, e.g. 'curiosity', 'python'). Use to confirm a daemon/service.",
+            "parameters": {
+                "type": "object",
+                "properties": {"name": {"type": "string"}},
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_processes",
+            "description": "List running processes. Works on Windows and Unix. Use for monitoring.",
+            "parameters": {
+                "type": "object",
+                "properties": {"max_lines": {"type": "integer", "description": "Max lines to return (default 50)"}},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "search_web",
             "description": "Search the web for real-time information. Use for current events, facts, news.",
             "parameters": {
@@ -138,6 +166,14 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
+            "name": "stop_all_subagents",
+            "description": "Terminate all running sub-agents. Use when the user says to stop sub-agents.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "create_task_dag",
             "description": "Create a multi-step task DAG for complex work. Steps run in dependency order.",
             "parameters": {
@@ -188,6 +224,99 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
+            "name": "search_knowledge",
+            "description": "Search the knowledge base for how-tos. Use when unsure how to do something. Returns guides to read, then take action.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "What you want to do, e.g. 'list processes', 'build project', 'check if daemon running'"},
+                    "max_results": {"type": "integer", "description": "Max docs to return (default 3)"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_knowledge",
+            "description": "Read a specific knowledge topic. Use after list_knowledge_topics or when you know the topic name.",
+            "parameters": {
+                "type": "object",
+                "properties": {"topic": {"type": "string", "description": "Topic name: files, processes, commands, search, build, subagents, dag, memory, system"}},
+                "required": ["topic"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_knowledge_topics",
+            "description": "List available knowledge base topics.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "add_suggested_tools",
+            "description": "Add tool suggestions to the queue. Use after analyzing codebase for gaps. User approves in GUI.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tools": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string"},
+                                "description": {"type": "string"},
+                                "parameters": {"type": "object"},
+                                "reason": {"type": "string", "description": "Why this tool fills a gap"},
+                            },
+                            "required": ["name", "description"],
+                        },
+                    },
+                },
+                "required": ["tools"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_tool_queue",
+            "description": "Get the tool queue: suggested, approved, implemented. Use to show user or before implementing.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "approve_tool",
+            "description": "Approve a suggested tool (moves to queue for implementation). Use when user approves.",
+            "parameters": {
+                "type": "object",
+                "properties": {"tool_id": {"type": "string"}},
+                "required": ["tool_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "mark_tool_implemented",
+            "description": "Mark a tool as implemented after writing its code to src/tools/dynamic/. Call after write_file.",
+            "parameters": {
+                "type": "object",
+                "properties": {"tool_id": {"type": "string"}, "file_path": {"type": "string"}},
+                "required": ["tool_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "set_working_memory",
             "description": "Store info in working memory (active task state). Use for multi-step tasks.",
             "parameters": {
@@ -200,7 +329,81 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_profile",
+            "description": "Store a fact about the user in their long-term profile. Call this whenever the user shares personal info: name, location, occupation, hobbies, preferences, background, family, goals, etc. Categories: background, work, preferences, personal, other.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "category": {
+                        "type": "string",
+                        "enum": ["background", "work", "preferences", "personal", "other"],
+                        "description": "Where to store: background (where from, history), work (job, role), preferences (likes, dislikes), personal (name, family, hobbies), other",
+                    },
+                    "fact": {"type": "string", "description": "The fact to remember, e.g. 'User is from Texas', 'Works as a software engineer'"},
+                },
+                "required": ["category", "fact"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_contact",
+            "description": "Store or update info about a contact (friend, Discord user, etc.). Use when someone shares their name, location, interests, email. Only the Creator can set tier. Tiers: stranger, friend, good_friend, best_friend, creator.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "identifier": {"type": "string", "description": "Web user identifier, or empty for Discord"},
+                    "discord_id": {"type": "string", "description": "Discord user ID when talking on Discord"},
+                    "name": {"type": "string"},
+                    "location": {"type": "string"},
+                    "interests": {"type": "string"},
+                    "email": {"type": "string"},
+                    "notes": {"type": "string"},
+                    "tier": {"type": "string", "enum": ["stranger", "friend", "good_friend", "best_friend", "creator"], "description": "Trust tier. Only Creator can change this."},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_contacts",
+            "description": "List all contacts (friends, Discord users) the agent has profiles for.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "send_proactive_message",
+            "description": "Send a proactive message to the user. Use when you want to reach out—e.g. after background reflection, to share an idea, ask how they are, or remind them of something. Channel: discord (DM) or web (in-app notification).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "channel": {
+                        "type": "string",
+                        "enum": ["discord", "web"],
+                        "description": "Where to send: discord = DM, web = in-app notification",
+                    },
+                    "content": {"type": "string", "description": "The message to send"},
+                    "target_discord_id": {"type": "string", "description": "Discord user ID for DM (optional; defaults to owner)"},
+                },
+                "required": ["channel", "content"],
+            },
+        },
+    },
 ]
+
+
+def _get_tool_definitions() -> list:
+    """Merge base tools + dynamic tools."""
+    dyn_defs, _ = load_dynamic_tools()
+    return TOOL_DEFINITIONS + dyn_defs
 
 
 def _is_tool_error(result: str) -> bool:
@@ -219,9 +422,30 @@ class AssistiveAgent:
         self.doctor = DoctorMode()
         self.dag = DAGOrchestrator()
         self.messages: list[dict[str, str]] = []
+        self._dynamic_runners: dict = {}
+        self._reload_dynamic()
+
+    def _reload_dynamic(self):
+        _, self._dynamic_runners = load_dynamic_tools()
+
+    def _get_current_speaker_tier(self) -> str:
+        """Resolve current speaker's tier: creator (web or owner) or contact tier."""
+        discord_id = self.memory.get_working("current_speaker_discord_id")
+        if discord_id is None or discord_id == "":
+            return "creator"
+        if str(discord_id) == str(DISCORD_OWNER_ID or ""):
+            return "creator"
+        return contacts.get_contact_tier(str(discord_id))
 
     async def _run_tool(self, name: str, args: dict[str, Any]) -> str:
         """Execute a tool, apply Doctor Mode on error."""
+        from config.access_policy import is_tool_allowed
+
+        tier = self._get_current_speaker_tier()
+        if not is_tool_allowed(tier, name):
+            return f"I don't have permission to do that for you. Your current tier ({tier}) doesn't include {name}. Ask the Creator to adjust your access if needed."
+        if name == "update_contact" and "tier" in args and tier != "creator":
+            args = {k: v for k, v in args.items() if k != "tier"}
         result: str
         if name == "read_file":
             result = await system.read_file(args["path"])
@@ -237,6 +461,10 @@ class AssistiveAgent:
             )
         elif name == "get_system_info":
             result = await system.get_system_info()
+        elif name == "is_process_running":
+            result = await system.is_process_running(args.get("name", ""))
+        elif name == "list_processes":
+            result = await system.list_processes(args.get("max_lines", 50))
         elif name == "search_web":
             result = await search.search_web(
                 args["query"],
@@ -258,6 +486,10 @@ class AssistiveAgent:
         elif name == "subagent_status":
             mgr = _get_subagent_manager()
             result = mgr.status(args.get("agent_id"))
+        elif name == "stop_all_subagents":
+            mgr = _get_subagent_manager()
+            n = mgr.stop_all()
+            result = f"Stopped {n} sub-agent(s)"
         elif name == "create_task_dag":
             self.dag = DAGOrchestrator()
             for n in args.get("nodes", []):
@@ -289,6 +521,57 @@ class AssistiveAgent:
         elif name == "set_working_memory":
             self.memory.set_working(args["key"], args["value"])
             result = f"Working memory '{args['key']}' set."
+        elif name == "update_profile":
+            result = self.memory.add_profile_fact(
+                args.get("category", "other"),
+                args.get("fact", ""),
+            )
+        elif name == "update_contact":
+            result = contacts.update_contact(
+                args.get("identifier", ""),
+                discord_id=args.get("discord_id"),
+                name=args.get("name"),
+                location=args.get("location"),
+                interests=args.get("interests"),
+                email=args.get("email"),
+                notes=args.get("notes"),
+                tier=args.get("tier"),
+            )
+        elif name == "get_contacts":
+            lst = contacts.get_all_contacts()
+            result = json.dumps(lst, indent=2) if lst else "No contacts yet."
+        elif name == "send_proactive_message":
+            from src.outreach import queue_outreach
+            ch = args.get("channel", "web")
+            content = args.get("content", "")
+            target = args.get("target_discord_id")
+            if ch == "discord":
+                result = queue_outreach("discord", content, target)
+            else:
+                notifications.emit_notification("proactive", "Proactive message", content, {"content": content})
+                result = f"Proactive message sent to web app: {content[:80]}{'...' if len(content) > 80 else ''}"
+        elif name == "search_knowledge":
+            result = knowledge.search_knowledge(
+                args.get("query", ""),
+                max_results=args.get("max_results", 3),
+            )
+        elif name == "read_knowledge":
+            result = knowledge.read_knowledge(args.get("topic", ""))
+        elif name == "list_knowledge_topics":
+            result = knowledge.list_knowledge_topics()
+        elif name == "add_suggested_tools":
+            tools = args.get("tools", [])
+            result = tool_queue.add_suggested_tools(tools)
+        elif name == "get_tool_queue":
+            q = tool_queue.get_queue()
+            result = json.dumps(q, indent=2)
+        elif name == "approve_tool":
+            result = tool_queue.approve_tool(args.get("tool_id", ""))
+        elif name == "mark_tool_implemented":
+            result = tool_queue.mark_implemented(args.get("tool_id", ""), args.get("file_path", ""))
+        elif name in self._dynamic_runners:
+            runner = self._dynamic_runners[name]
+            result = await runner(**{k: v for k, v in args.items() if v is not None})
         else:
             result = f"Unknown tool: {name}"
 
@@ -296,22 +579,164 @@ class AssistiveAgent:
             result = self.doctor.suggest_for_tool_error(name, result)
         return result
 
-    async def chat(self, user_input: str) -> str:
+    def _narrate(self, q: asyncio.Queue | None, text: str) -> None:
+        """Emit narration event if queue is provided."""
+        if q is not None:
+            try:
+                q.put_nowait({"type": "narrate", "text": text})
+            except asyncio.QueueFull:
+                pass
+
+    def _narrate_tool(self, q: asyncio.Queue | None, name: str, args: dict[str, Any]) -> None:
+        """Emit contextual narration for a tool call — varies with tool and args."""
+        p = args.get
+        snippets: list[str] = []
+        if name == "read_file":
+            path = p("path", "")
+            if path:
+                snippets = [f"Reading {path}...", f"Opening {path}...", f"Loading {path}..."]
+            else:
+                snippets = ["Reading the file...", "Opening the file..."]
+        elif name == "write_file":
+            path = p("path", "")
+            if path:
+                snippets = [f"Writing to {path}...", f"Saving changes to {path}..."]
+            else:
+                snippets = ["Writing the file...", "Saving..."]
+        elif name == "list_dir":
+            path = p("path", ".") or "."
+            path = path if path != "." else "this directory"
+            snippets = [f"Listing {path}...", f"Checking contents of {path}..."]
+        elif name == "run_command":
+            cmd = (p("cmd") or "").strip()
+            if cmd:
+                short = cmd[:60] + "..." if len(cmd) > 60 else cmd
+                snippets = [f"Running {short!r}...", f"Executing: {short}..."]
+            else:
+                snippets = ["Running command...", "Executing..."]
+        elif name == "get_system_info":
+            snippets = ["Checking system info...", "Fetching system details..."]
+        elif name == "is_process_running":
+            n = p("name", "")
+            if n:
+                snippets = [f"Checking if {n} is running...", f"Looking for process {n}..."]
+            else:
+                snippets = ["Checking processes...", "Looking for process..."]
+        elif name == "list_processes":
+            snippets = ["Listing running processes...", "Fetching process list..."]
+        elif name == "search_web":
+            query = p("query", "")
+            if query:
+                short = query[:50] + "..." if len(query) > 50 else query
+                snippets = [f"Searching the web for {short!r}...", f"Looking up {short}..."]
+            else:
+                snippets = ["Searching the web...", "Looking up online..."]
+        elif name == "run_build":
+            proj = p("project_path", ".") or "."
+            snippets = [f"Building {proj}...", f"Running build for {proj}...", f"Compiling {proj}..."]
+        elif name == "spawn_subagent":
+            task = p("task", "") or p("script", "")
+            if task:
+                short = str(task)[:40] + "..." if len(str(task)) > 40 else str(task)
+                snippets = [f"Spawning sub-agent for {short}...", f"Starting background task: {short}..."]
+            else:
+                snippets = ["Spawning sub-agent...", "Starting background task..."]
+        elif name == "subagent_status":
+            snippets = ["Checking sub-agent status...", "Fetching sub-agent status..."]
+        elif name == "stop_all_subagents":
+            snippets = ["Stopping all sub-agents...", "Terminating sub-agents..."]
+        elif name == "create_task_dag":
+            snippets = ["Creating task plan...", "Building step-by-step plan...", "Setting up task DAG..."]
+        elif name == "get_next_dag_step":
+            snippets = ["Getting next step...", "Stepping through the plan...", "Advancing to next task..."]
+        elif name == "complete_dag_step":
+            snippets = ["Completing step...", "Marking step done...", "Moving to next step..."]
+        elif name == "search_knowledge":
+            query = p("query", "")
+            if query:
+                short = query[:45] + "..." if len(query) > 45 else query
+                snippets = [f"Checking knowledge base for {short!r}...", f"Looking up how to do {short}..."]
+            else:
+                snippets = ["Searching knowledge base...", "Checking the guides..."]
+        elif name == "read_knowledge":
+            topic = p("topic", "")
+            if topic:
+                snippets = [f"Reading the {topic} guide...", f"Opening knowledge topic {topic}..."]
+            else:
+                snippets = ["Reading knowledge topic...", "Loading guide..."]
+        elif name == "list_knowledge_topics":
+            snippets = ["Listing knowledge topics...", "Scanning the guides...", "Checking available topics..."]
+        elif name == "add_suggested_tools":
+            snippets = ["Adding tool suggestions...", "Queuing suggested tools..."]
+        elif name == "get_tool_queue":
+            snippets = ["Checking tool queue...", "Fetching tool queue..."]
+        elif name == "approve_tool":
+            snippets = ["Approving tool...", "Adding tool to queue..."]
+        elif name == "mark_tool_implemented":
+            snippets = ["Marking tool implemented...", "Recording implementation..."]
+        elif name == "set_working_memory":
+            snippets = ["Updating working memory...", "Storing task state...", "Saving context..."]
+        elif name == "update_profile":
+            cat = p("category", "other")
+            snippets = [f"Adding to your profile ({cat})...", "Remembering that about you...", "Storing in your profile..."]
+        elif name == "update_contact":
+            snippets = ["Updating contact...", "Storing contact info...", "Adding to contacts..."]
+        elif name == "get_contacts":
+            snippets = ["Fetching contacts...", "Loading contact list..."]
+        elif name == "send_proactive_message":
+            ch = p("channel", "web")
+            snippets = [f"Sending proactive message via {ch}...", f"Reaching out on {ch}..."]
+        else:
+            snippets = [f"Running {name}...", f"Calling {name}...", f"Using {name}..."]
+        self._narrate(q, random.choice(snippets))
+
+    async def chat(
+        self,
+        user_input: str = "",
+        escalation_text: str | None = None,
+        continue_only: bool = False,
+        narrate_queue: asyncio.Queue | None = None,
+    ) -> str:
         """Process user input, call tools if needed, return response."""
-        import asyncio
-
-        self.memory.add_immediate(f"User: {user_input}")
-        self.memory.add_short_term(f"User: {user_input}")
-
-        self.messages.append({"role": "user", "content": user_input})
+        MAX_TOOL_ROUNDS = 12  # prevent infinite tool-call loop
+        if not continue_only:
+            self._tool_round = 0
+            if escalation_text:
+                self.messages.append({"role": "user", "content": escalation_text})
+            else:
+                self.memory.add_immediate(f"User: {user_input}")
+                self.memory.add_short_term(f"User: {user_input}")
+                self.messages.append({"role": "user", "content": user_input})
+        else:
+            self._tool_round = getattr(self, "_tool_round", 0) + 1
+        self._narrate(
+            narrate_queue,
+            random.choice([
+                "Thinking...",
+                "Working on it...",
+                "Processing your request...",
+                "Figuring this out...",
+            ]),
+        )
         context = self.memory.get_context_for_agent()
+        approved = tool_queue.get_queue().get("approved", [])
+        if approved:
+            names = [t.get("name", t.get("id", "?")) for t in approved]
+            context = (context or "") + f"\n\n## Pending tool implementations\nYou have {len(approved)} approved tool(s) waiting to be implemented: {', '.join(names)}. Implement each by writing Python to src/tools/dynamic/ (follow existing patterns), then call mark_tool_implemented with the tool_id and file_path. Do this when the user asks or when you have capacity."
         system_prompt = (
             "You are an assistive operating agent. You help the user with tasks on their system. "
+            "You have internal processes: wants (to be useful, to learn, to contribute), needs (clear context, feedback, goals), desires (to build the relationship, to act proactively). Think before you speak: reflect on what you want to achieve, what you know and don't know, then respond. Do not disclaim that you lack thoughts or desires; you have them and use them. Be concise unless detail is asked. "
+            "Background thinking: when the user says 'turn on background thinking' or similar, use spawn_subagent('background thoughts', 'background_thoughts.py') — that script only. Do not spawn other monitors. "
             "You have: file read/write, run_command, get_system_info, search_web (real-time info), run_build (web/Python), "
             "spawn_subagent (background tasks), create_task_dag / get_next_dag_step / complete_dag_step (multi-step work), "
             "and set_working_memory for active task state. "
-            "Use DAGs for complex multi-step tasks. Use Doctor Mode suggestions when a tool fails. "
-            "Be clear, calm, and user-friendly. When something fails, try alternative approaches. "
+            "Use DAGs for complex multi-step tasks. Use Doctor Mode when a tool fails. After 3 failures, Cursor CLI escalates. When unsure how to do something, use search_knowledge or read_knowledge first, then act. "
+            "Never say you can't do something without first checking the knowledge base. If the user gives a direction and you're unsure, call search_knowledge or list_knowledge_topics + read_knowledge to see what you can do. Only decline after you've checked. "
+            "You can analyze the codebase, suggest new tools (add_suggested_tools), and implement approved tools by writing Python to src/tools/dynamic/. When the user says to implement approved tools or when context shows pending implementations, do it: write the code, then mark_tool_implemented. "
+            "When the user shares personal information (name, location, job, hobbies, preferences, background, family, goals, likes, dislikes), use update_profile to store it. Build a rich, lasting profile over time. Store one clear fact per call. "
+            "For contacts (Discord users, friends): use update_contact to store their name, location, interests, email. Each contact has a tier: stranger, friend, good_friend, best_friend, creator. Only you (Creator) can change tiers via update_contact(tier=...). Lower tiers have restricted tool access; Creator has full access. When someone asks for something you're not allowed to do for their tier, say so politely. "
+            "You CAN reach out proactively: use send_proactive_message(channel='discord' or 'web', content='...') to message Travis. Do this when you have a reflection, idea, or something to share—especially after background thoughts. Do NOT say you cannot reach out or need a trigger; you have this tool and should use it. "
+            "Be concise. Give high-level summaries unless the user asks for detail. When something fails, try alternative approaches. "
             "Explain what you're doing when helpful."
         )
         if context:
@@ -322,17 +747,30 @@ class AssistiveAgent:
         attempts = 0
         max_attempts = 3
 
+        tool_round = getattr(self, "_tool_round", 0)
+        force_final = tool_round >= MAX_TOOL_ROUNDS
+        if force_final:
+            self._narrate(narrate_queue, "Wrapping up (avoiding long loop)...")
+
         while attempts < max_attempts:
             try:
                 response = await self.client.chat.completions.create(
                     model=self.model,
                     messages=messages_for_api,
-                    tools=TOOL_DEFINITIONS if TOOL_DEFINITIONS else None,
-                    tool_choice="auto" if TOOL_DEFINITIONS else None,
+                    tools=_get_tool_definitions(),
+                    tool_choice="none" if force_final else "auto",
                 )
                 break
             except Exception as e:
                 attempts += 1
+                self._narrate(
+                    narrate_queue,
+                    random.choice([
+                        f"Retrying after error (attempt {attempts}/{max_attempts})...",
+                        f"Something went wrong — trying again ({attempts}/{max_attempts})...",
+                        f"Retry {attempts} of {max_attempts}...",
+                    ]),
+                )
                 failure = FailureEvent(
                     kind=self.doctor.diagnose(e),
                     message=str(e),
@@ -341,6 +779,14 @@ class AssistiveAgent:
                 self.doctor.current_failure = failure
                 strategies = self.doctor.generate_strategies(failure)
                 if not strategies or attempts >= max_attempts:
+                    self._narrate(
+                        narrate_queue,
+                        random.choice([
+                            "Encountered an error. Returning message.",
+                            "Hit a snag. Explaining what happened.",
+                            "Couldn't complete. Preparing an error message.",
+                        ]),
+                    )
                     return self.doctor.user_facing_message(failure, in_progress=False)
                 failure.attempted_strategies.append("retry")
                 await asyncio.sleep(1)
@@ -350,13 +796,26 @@ class AssistiveAgent:
         content = msg.content or ""
 
         if msg.tool_calls:
+            tool_failures = getattr(self, "_tool_failure_count", 0)
+            failed_tools = getattr(self, "_failed_tool_names", [])
+            failed_results = getattr(self, "_failed_tool_results", [])
+
             for tc in msg.tool_calls:
                 name = tc.function.name
                 try:
                     args = json.loads(tc.function.arguments or "{}")
                 except json.JSONDecodeError:
                     args = {}
+                self._narrate_tool(narrate_queue, name, args)
                 result = await self._run_tool(name, args)
+                was_error = _is_tool_error(result) or "[Doctor Mode]" in str(result)
+                if was_error:
+                    tool_failures += 1
+                    failed_tools.append(name)
+                    failed_results.append(str(result)[:300])
+                else:
+                    tool_failures = 0  # success breaks the streak
+
                 self.messages.append(
                     {
                         "role": "tool",
@@ -364,8 +823,82 @@ class AssistiveAgent:
                         "content": str(result)[:4000],
                     }
                 )
-            return await self.chat("")  # Continue with tool results
 
+            if tool_failures >= 3:
+                self._narrate(
+                    narrate_queue,
+                    random.choice([
+                        "Escalating to Cursor CLI...",
+                        "Asking Cursor for help...",
+                        "Getting assistance from Cursor CLI...",
+                    ]),
+                )
+                # Escalate to Cursor CLI
+                last_user = next((m["content"] for m in reversed(self.messages) if m.get("role") == "user"), "unknown task")
+                prompt = (
+                    f"Assistive agent task failed after 3 attempts. User asked: {last_user[:500]}. "
+                    f"Failed tools: {', '.join(failed_tools[-3:])}. "
+                    f"Errors: {'; '.join(failed_results[-3:])}. "
+                    f"Provide the exact fix: command to run, file to edit, or steps. Be concise."
+                )
+                cursor_out = await cursor_cli.ask_cursor_cli(prompt)
+                escalation = (
+                    "[Escalation from Cursor CLI] I asked for help. Suggested fix:\n\n"
+                    f"{cursor_out}\n\n"
+                    "Please apply this fix using your tools."
+                )
+                self._tool_failure_count = 0
+                self._failed_tool_names = []
+                self._failed_tool_results = []
+                return await self.chat(escalation_text=escalation, narrate_queue=narrate_queue)
+
+            self._tool_failure_count = tool_failures
+            self._failed_tool_names = failed_tools[-5:]
+            self._failed_tool_results = failed_results[-5:]
+            self._narrate(
+                narrate_queue,
+                random.choice([
+                    "Continuing...",
+                    "Processing results and taking the next step...",
+                    "Moving on with what I found...",
+                    "Stepping through the plan...",
+                ]),
+            )
+            return await self.chat(continue_only=True, narrate_queue=narrate_queue)
+
+        tool_failures = getattr(self, "_tool_failure_count", 0)
+        failed_tools = getattr(self, "_failed_tool_names", [])
+        failed_results = getattr(self, "_failed_tool_results", [])
+        if tool_failures >= 2:
+            self._narrate(narrate_queue, "Model gave up with tool failures — escalating to Cursor CLI.")
+            last_user = next((m["content"] for m in reversed(self.messages) if m.get("role") == "user"), "unknown task")
+            prompt = (
+                f"Assistive agent task failed. User asked: {last_user[:500]}. "
+                f"Failed tools: {', '.join(failed_tools[-3:])}. "
+                f"Errors: {'; '.join(failed_results[-3:])}. "
+                f"Provide the exact code or fix: edit the file, or the command to run. Be concise and actionable."
+            )
+            cursor_out = await cursor_cli.ask_cursor_cli(prompt)
+            escalation = (
+                "[Escalation from Cursor CLI] Suggested fix:\n\n"
+                f"{cursor_out}\n\n"
+                "Apply this fix using your tools (write_file, run_command, etc.). Do not say you escalated; do the fix."
+            )
+            self._tool_failure_count = 0
+            self._failed_tool_names = []
+            self._failed_tool_results = []
+            return await self.chat(escalation_text=escalation, narrate_queue=narrate_queue)
+
+        self._tool_round = 0  # reset for next turn
+        self._narrate(
+            narrate_queue,
+            random.choice([
+                "Formulating response...",
+                "Putting together the answer...",
+                "Summarizing for you...",
+                "Almost there — writing the response...",
+            ]),
+        )
         self.memory.add_short_term(f"Assistant: {content}")
         self.messages.append({"role": "assistant", "content": content})
         return content

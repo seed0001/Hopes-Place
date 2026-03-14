@@ -76,6 +76,12 @@ An assistive AI agent powered by Grok 3 (xAI) with full system access, memory, v
 | `read_knowledge` | Read a specific topic |
 | `list_knowledge_topics` | List available guides |
 
+### Swarm
+
+| Tool | Description |
+|------|-------------|
+| `swarm_on_problem` | Activate the neuron swarm to tackle a problem. He'll ask: cloud (Grok) or local (Ollama). Returns structured solution (Summary, Steps, Recommendations). |
+
 ### Proactive Outreach
 
 | Tool | Description |

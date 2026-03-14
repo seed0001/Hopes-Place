@@ -36,4 +36,4 @@ CURSOR_API_KEY = os.getenv("CURSOR_API_KEY", "")
 
 # Discord (bot + proactive outreach)
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN", "")
-DISCORD_OWNER_ID = os.getenv("DISCORD_OWNER_ID", "")  # Travis's Discord user ID for DMs
+DISCORD_OWNER_ID = os.getenv("DISCORD_OWNER_ID", "")  # Primary owner Discord ID for DMs

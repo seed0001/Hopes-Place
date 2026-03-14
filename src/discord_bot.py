@@ -71,7 +71,7 @@ async def _run_discord_bot():
         if not content:
             return
 
-        # Notify Travis: desktop + web
+        # Notify owner: desktop + web
         notifications.emit_notification(
             "discord_message",
             f"Discord: {author_name}",
@@ -89,8 +89,10 @@ async def _run_discord_bot():
         ctx_prefix = ""
         if contact_ctx:
             ctx_prefix = f"[Contact profile: {contact_ctx}]\n\n"
-        if author_id == DISCORD_OWNER_ID:
-            ctx_prefix += "[Travis is messaging via Discord—he's remote, likely on his phone, and may not be at home.]\n\n"
+        from src.agent.soul import get_context_for_speaker
+        speaker_ctx = get_context_for_speaker(is_web=False, discord_id=author_id, author_name=author_name)
+        if speaker_ctx:
+            ctx_prefix += speaker_ctx
         user_msg = f"{ctx_prefix}Message from {author_name} (Discord, discord_id={author_id}) who just said: {content}"
 
         _agent_ref.memory.set_working("current_speaker_discord_id", author_id)

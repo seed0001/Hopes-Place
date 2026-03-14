@@ -61,5 +61,5 @@ def manage_memory(memory_entry, timestamp=None):
 
 if __name__ == '__main__':
     # Example usage for testing
-    print(json.dumps(manage_memory('First interaction with Travis', '2026-03-12T23:45:00'), indent=2))
-    print(json.dumps(manage_memory('interaction with Travis'), indent=2))
+    print(json.dumps(manage_memory('First interaction with user', '2026-03-12T23:45:00'), indent=2))
+    print(json.dumps(manage_memory('interaction with user'), indent=2))

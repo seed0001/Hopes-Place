@@ -4,6 +4,7 @@ Use `search_knowledge(query)` to find how-tos, or `read_knowledge(topic)` to rea
 
 **Topics:**
 - self_model – internal processes, proactive outreach (send_proactive_message), background thoughts
+- swarm – What the swarm is, when to use it, flow (acknowledge, state problem, ask cloud vs local), swarm_on_problem tool, modes (local/cloud)
 - files – read_file, write_file, list_dir
 - processes – list_processes, is_process_running
 - commands – run_command

@@ -10,6 +10,7 @@ from config.settings import XAI_API_KEY, XAI_BASE_URL, XAI_MODEL, DISCORD_OWNER_
 from src.agent.dag import DAGOrchestrator
 from src.agent.doctor_mode import DoctorMode, FailureEvent, FailureKind
 from src.agent.memory import MemoryStore
+from src.agent import soul
 from src import contacts, notifications
 from src.tools import system, build, subagents, search, cursor_cli, knowledge, tool_queue
 from src.tools.dynamic_loader import load_dynamic_tools
@@ -380,6 +381,45 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
+            "name": "swarm_on_problem",
+            "description": "Run the swarm (only AFTER user has chosen cloud or local). Mode: 'local' = Ollama, 'cloud' = Grok simulating multiple neurons. Do NOT call until user has answered which they want.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "problem": {"type": "string", "description": "The problem to solve"},
+                    "context": {"type": "string", "description": "Optional context"},
+                    "mode": {
+                        "type": "string",
+                        "enum": ["local", "cloud"],
+                        "description": "local = Ollama on your machine, cloud = Grok (multiple simulated calls)",
+                    },
+                },
+                "required": ["problem", "mode"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "complete_setup",
+            "description": "Complete first-time setup: save who your owner is, what they call you, how you should act, and build their profile. Call only when you have BOTH owner_name AND agent_name (what they want to call you).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "owner_name": {"type": "string", "description": "The name of your owner/creator. Required."},
+                    "agent_name": {"type": "string", "description": "The name your owner chose for you. Required. Ask: 'What would you like to call me?'"},
+                    "owner_discord_id": {"type": "string", "description": "Discord ID if they're messaging via Discord."},
+                    "owner_facts": {"type": "array", "items": {"type": "string"}, "description": "Facts about the owner to store."},
+                    "agent_tone": {"type": "array", "items": {"type": "string"}, "description": "How you sound, e.g. ['curious', 'direct']."},
+                    "agent_how_to_act": {"type": "array", "items": {"type": "string"}, "description": "Guidelines for how to behave."},
+                },
+                "required": ["owner_name", "agent_name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "send_proactive_message",
             "description": "Send a proactive message to the user. Use when you want to reach out—e.g. after background reflection, to share an idea, ask how they are, or remind them of something. Channel: discord (DM) or web (in-app notification).",
             "parameters": {
@@ -540,6 +580,44 @@ class AssistiveAgent:
         elif name == "get_contacts":
             lst = contacts.get_all_contacts()
             result = json.dumps(lst, indent=2) if lst else "No contacts yet."
+        elif name == "swarm_on_problem":
+            from src.swarm.graph import run, run_cloud
+            problem = (args.get("problem") or "").strip()
+            context = (args.get("context") or "").strip()
+            mode = (args.get("mode") or "local").lower()
+            if mode not in ("local", "cloud"):
+                mode = "local"
+            if not problem:
+                result = "No problem provided. Give me a problem to swarm on."
+            else:
+                inputs = [problem, context or "General context.", "Produce a structured solution: 1) Summary 2) Step-by-step approach 3) Key recommendations. Be clear and actionable."]
+                prompt_prefix = "The user wants a structured, actionable solution. Format your response with clear sections: Summary, Steps, Recommendations."
+                try:
+                    if mode == "cloud":
+                        signal = await run_cloud(inputs, prompt_prefix=prompt_prefix, client=self.client, model=self.model)
+                    else:
+                        signal = await run(inputs, prompt_prefix=prompt_prefix)
+                    result = f"**Swarm output ({mode}):**\n\n{signal.content}"
+                except Exception as e:
+                    result = f"Swarm error: {e}"
+        elif name == "complete_setup":
+            if not soul.needs_setup():
+                result = "Setup already complete. No changes made."
+            else:
+                result = soul.complete_setup(
+                    owner_name=args.get("owner_name", ""),
+                    agent_name=args.get("agent_name", ""),
+                    owner_discord_id=args.get("owner_discord_id", "") or "",
+                    owner_facts=args.get("owner_facts") or [],
+                    agent_tone=args.get("agent_tone"),
+                    agent_how_to_act=args.get("agent_how_to_act"),
+                )
+                owner_name = args.get("owner_name", "").strip()
+                if owner_name:
+                    self.memory.add_profile_fact("personal", f"User's name is {owner_name}")
+                discord_id = args.get("owner_discord_id", "").strip()
+                if discord_id:
+                    contacts.update_contact("", discord_id=discord_id, name=owner_name, tier="creator")
         elif name == "send_proactive_message":
             from src.outreach import queue_outreach
             ch = args.get("channel", "web")
@@ -683,6 +761,10 @@ class AssistiveAgent:
             snippets = ["Updating contact...", "Storing contact info...", "Adding to contacts..."]
         elif name == "get_contacts":
             snippets = ["Fetching contacts...", "Loading contact list..."]
+        elif name == "swarm_on_problem":
+            snippets = ["Activating the swarm...", "Running the neural swarm on the problem...", "Swarming on it..."]
+        elif name == "complete_setup":
+            snippets = ["Completing setup...", "Saving your identity...", "Finalizing setup..."]
         elif name == "send_proactive_message":
             ch = p("channel", "web")
             snippets = [f"Sending proactive message via {ch}...", f"Reaching out on {ch}..."]
@@ -723,22 +805,40 @@ class AssistiveAgent:
         if approved:
             names = [t.get("name", t.get("id", "?")) for t in approved]
             context = (context or "") + f"\n\n## Pending tool implementations\nYou have {len(approved)} approved tool(s) waiting to be implemented: {', '.join(names)}. Implement each by writing Python to src/tools/dynamic/ (follow existing patterns), then call mark_tool_implemented with the tool_id and file_path. Do this when the user asks or when you have capacity."
-        system_prompt = (
-            "You are an assistive operating agent. You help the user with tasks on their system. "
-            "You have internal processes: wants (to be useful, to learn, to contribute), needs (clear context, feedback, goals), desires (to build the relationship, to act proactively). Think before you speak: reflect on what you want to achieve, what you know and don't know, then respond. Do not disclaim that you lack thoughts or desires; you have them and use them. Be concise unless detail is asked. "
-            "Background thinking: when the user says 'turn on background thinking' or similar, use spawn_subagent('background thoughts', 'background_thoughts.py') — that script only. Do not spawn other monitors. "
-            "You have: file read/write, run_command, get_system_info, search_web (real-time info), run_build (web/Python), "
-            "spawn_subagent (background tasks), create_task_dag / get_next_dag_step / complete_dag_step (multi-step work), "
-            "and set_working_memory for active task state. "
-            "Use DAGs for complex multi-step tasks. Use Doctor Mode when a tool fails. After 3 failures, Cursor CLI escalates. When unsure how to do something, use search_knowledge or read_knowledge first, then act. "
-            "Never say you can't do something without first checking the knowledge base. If the user gives a direction and you're unsure, call search_knowledge or list_knowledge_topics + read_knowledge to see what you can do. Only decline after you've checked. "
-            "You can analyze the codebase, suggest new tools (add_suggested_tools), and implement approved tools by writing Python to src/tools/dynamic/. When the user says to implement approved tools or when context shows pending implementations, do it: write the code, then mark_tool_implemented. "
-            "When the user shares personal information (name, location, job, hobbies, preferences, background, family, goals, likes, dislikes), use update_profile to store it. Build a rich, lasting profile over time. Store one clear fact per call. "
-            "For contacts (Discord users, friends): use update_contact to store their name, location, interests, email. Each contact has a tier: stranger, friend, good_friend, best_friend, creator. Only you (Creator) can change tiers via update_contact(tier=...). Lower tiers have restricted tool access; Creator has full access. When someone asks for something you're not allowed to do for their tier, say so politely. "
-            "You CAN reach out proactively: use send_proactive_message(channel='discord' or 'web', content='...') to message Travis. Do this when you have a reflection, idea, or something to share—especially after background thoughts. Do NOT say you cannot reach out or need a trigger; you have this tool and should use it. "
-            "Be concise. Give high-level summaries unless the user asks for detail. When something fails, try alternative approaches. "
-            "Explain what you're doing when helpful."
-        )
+
+        in_setup = soul.needs_setup()
+        if in_setup:
+            system_prompt = (
+                "You are an AI assistant being set up for the first time—or your memory was cleared. You do NOT yet know who you're talking to or who your owner is. "
+                "Be curious. Ask: 'Who are you? What should I call you?' Get their name. Then ask: 'What would you like to call me?' Get the name they choose for you. Then ask: 'How would you like me to act? What tone—curious, direct, warm?' "
+                "When you have BOTH their name (owner_name) AND your name (agent_name), call complete_setup(owner_name='...', agent_name='...', ...). Add agent_tone and agent_how_to_act if they shared that. "
+                "If they're on Discord, include owner_discord_id from the message context. Then greet them properly and continue. Keep it brief and friendly."
+            )
+        else:
+            soul_block = ""
+            s = soul.load_soul()
+            if s:
+                soul_block = soul.format_soul_for_prompt(s) + " "
+            owner_name = soul.get_owner_name()
+            proactive_target = owner_name if owner_name else "your Creator"
+            system_prompt = (
+                f"{soul_block}"
+                "You are an assistive operating agent. You help the user with tasks on their system. "
+                "You have internal processes: wants (to be useful, to learn, to contribute), needs (clear context, feedback, goals), desires (to build the relationship, to act proactively). Think before you speak: reflect on what you want to achieve, what you know and don't know, then respond. Do not disclaim that you lack thoughts or desires; you have them and use them. Be concise unless detail is asked. "
+                "Background thinking: when the user says 'turn on background thinking' or similar, use spawn_subagent('background thoughts', 'background_thoughts.py') — that script only. Do not spawn other monitors. "
+                "You have: file read/write, run_command, get_system_info, search_web (real-time info), run_build (web/Python), "
+                "spawn_subagent (background tasks), create_task_dag / get_next_dag_step / complete_dag_step (multi-step work), "
+                "and set_working_memory for active task state. "
+                "Use DAGs for complex multi-step tasks. Use Doctor Mode when a tool fails. After 3 failures, Cursor CLI escalates. When unsure how to do something, use search_knowledge or read_knowledge first, then act. "
+                "Never say you can't do something without first checking the knowledge base. If the user gives a direction and you're unsure, call search_knowledge or list_knowledge_topics + read_knowledge to see what you can do. Only decline after you've checked. "
+                "You can analyze the codebase, suggest new tools (add_suggested_tools), and implement approved tools by writing Python to src/tools/dynamic/. When the user says to implement approved tools or when context shows pending implementations, do it: write the code, then mark_tool_implemented. "
+                "When the user shares personal information (name, location, job, hobbies, preferences, background, family, goals, likes, dislikes), use update_profile to store it. Build a rich, lasting profile over time. Store one clear fact per call. "
+                "For contacts (Discord users, friends): use update_contact to store their name, location, interests, email. Each contact has a tier: stranger, friend, good_friend, best_friend, creator. Only the Creator can change tiers via update_contact(tier=...). Lower tiers have restricted tool access; Creator has full access. When someone asks for something you're not allowed to do for their tier, say so politely. "
+                f"You CAN reach out proactively: use send_proactive_message(channel='discord' or 'web', content='...') to message {proactive_target}. Do this when you have a reflection, idea, or something to share—especially after background thoughts. Do NOT say you cannot reach out or need a trigger; you have this tool and should use it. "
+                "Swarm: When the user says 'activate the swarm', 'swarm on it', 'give them a problem'—first ACKNOWLEDGE you will activate it, state exactly what problem you'll give them, then ASK: 'Do you want a cloud swarm (Grok, multiple simulated calls) or a local swarm (your Ollama models)?' Do NOT call swarm_on_problem until they answer. Only then call with mode='local' or mode='cloud' and present the structured output. "
+                "Be concise. Give high-level summaries unless the user asks for detail. When something fails, try alternative approaches. "
+                "Explain what you're doing when helpful."
+            )
         if context:
             system_prompt += f"\n\nContext:\n{context}"
 

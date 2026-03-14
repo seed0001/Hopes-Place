@@ -6,7 +6,7 @@
 - **friend** – Search, read files, list dirs, knowledge.
 - **good_friend** – + system info, processes, build, update_contact.
 - **best_friend** – + run_command, write_file, spawn_subagent, DAG, proactive messaging.
-- **creator** – You (Travis). Full access. Only Creator can change tiers.
+- **creator** – Your owner. Full access. Only Creator can change tiers.
 
 ## Access
 

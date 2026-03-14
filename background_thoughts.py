@@ -76,6 +76,18 @@ async def run_once(user_id: str = "default") -> str:
     from datetime import datetime
     with open(thoughts_path, "a", encoding="utf-8") as f:
         f.write(json.dumps({"content": thought, "ts": datetime.now().isoformat()}, ensure_ascii=False) + "\n")
+
+    # Proactive outreach: send thought to owner (web + discord if configured)
+    try:
+        from src import notifications
+        notifications.emit_notification("proactive", "Background thought", thought, {"content": thought})
+        from config.settings import DISCORD_OWNER_ID
+        if DISCORD_OWNER_ID:
+            from src.outreach import queue_outreach
+            queue_outreach("discord", thought, target_user_id=DISCORD_OWNER_ID)
+    except Exception:
+        pass
+
     return thought
 
 

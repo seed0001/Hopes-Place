@@ -19,12 +19,33 @@ from src.voice.tts import synthesize
 # Global agent instance
 agent: AssistiveAgent | None = None
 _discord_task: asyncio.Task | None = None
+_background_thoughts_task: asyncio.Task | None = None
+
+
+async def _background_thoughts_loop():
+    """Run autonomous background thinking + proactive outreach. Shares main process queues."""
+    import random
+    from background_thoughts import run_once
+    first = True
+    while True:
+        if not first:
+            wait = random.randint(300, 900)  # 5–15 min
+            await asyncio.sleep(wait)
+        first = False
+        try:
+            await run_once()
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            print(f"Background thought error: {e}")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global agent, _discord_task
+    global agent, _discord_task, _background_thoughts_task
     agent = AssistiveAgent(user_id="default")
+    # Start background thinking (autonomous) + proactive outreach from boot
+    _background_thoughts_task = asyncio.create_task(_background_thoughts_loop())
     # Start Discord bot (and outreach consumer) if configured
     try:
         from src.discord_bot import set_agent, start_discord_task
@@ -34,6 +55,12 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"Discord bot not started: {e}")
     yield
+    if _background_thoughts_task and not _background_thoughts_task.done():
+        _background_thoughts_task.cancel()
+        try:
+            await _background_thoughts_task
+        except asyncio.CancelledError:
+            pass
     if _discord_task and not _discord_task.done():
         _discord_task.cancel()
         try:
@@ -68,7 +95,8 @@ async def _stream_chat_generator(message: str):
     async def run_agent():
         try:
             agent.memory.set_working("current_speaker_discord_id", None)
-            ctx = "[Travis is messaging from the web app (desktop, at home).]\n\n"
+            from src.agent.soul import get_context_for_speaker
+            ctx = get_context_for_speaker(is_web=True)
             result = await agent.chat(ctx + message, narrate_queue=queue)
             await queue.put({"type": "response", "text": result})
         except Exception as e:

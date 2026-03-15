@@ -1,5 +1,6 @@
 """Sub-agent / daemon manager - spawn background workers for tasks."""
 import asyncio
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -54,11 +55,15 @@ class SubAgentManager:
         if not p.is_absolute():
             p = PROJECT_ROOT / script_path
         resolved = str(p.resolve())
+        import os
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
         try:
             proc = await asyncio.create_subprocess_exec(
-                "python", resolved, *args,
+                sys.executable, resolved, *args,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
+                env=env,
             )
             self.agents[aid].process = proc
             out, _ = await proc.communicate()

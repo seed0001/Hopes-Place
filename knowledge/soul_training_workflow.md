@@ -1,61 +1,55 @@
 # Soul Training Workflow
 
-How to create and train your own soul model. You direct the process; the local layer executes.
+How to build and train your own soul model. Use `run_soul_training_step` — your dedicated tool.
 
 ---
 
-## Flow
+## Quickstart (recommended)
 
-0. **Prepare base** (once) – Download TinyLlama. Use `spawn_subagent("prepare soul base", "scripts/prepare_soul_base.py")` so you get a completion signal when done. ~2–3 GB.
-1. **Decide** – What aspect of soul? (emotional tone, relational style, vulnerability, continuity, conflict handling)
-2. **Generate** – Instruct local Ollama to produce pairs for that aspect
-3. **Review** – Filter out chatbot/AI/assistant framing
-4. **Train** – Run LoRA fine-tuning on curated pairs
+```
+run_soul_training_step(step="full")
+```
+
+Runs the entire pipeline in one background job: prepare → generate → review → train.
+Optional args: `topic`, `count` (default 40), `epochs` (default 3).
+Monitor with `subagent_status`. When done, `get_subagent_output` to see results.
 
 ---
 
-## Step 1: Generate soul pairs
+## Your tool: run_soul_training_step
 
-```
-spawn_subagent("soul data", "scripts/generate_training_data.py", ["emotional reciprocity when user shares something personal", "--count", "30", "--soul"])
-```
+| step | what it does |
+|------|--------------|
+| `full` | Entire pipeline in one job (recommended) |
+| `prepare` | Download TinyLlama base (~2–3 GB, runs once, cached) |
+| `generate` | Create soul pairs via Ollama (`topic`, `count`) |
+| `review` | Filter chatbot framing → `curated.jsonl` |
+| `train` | LoRA fine-tune → `soul_model/` (`epochs`) |
 
-- Use `--soul` so output goes to `data/soul_training/` with soul-specific prompts
-- Topic = the emotional/relational aspect
-- When done: `get_subagent_output(agent_id)` or `read_file("data/soul_training/soul_latest.jsonl")`
-
----
-
-## Step 2: Review pairs
-
-```
-spawn_subagent("review soul pairs", "scripts/review_training_pairs.py", ["data/soul_training/soul_latest.jsonl"])
-```
-
-- Removes pairs with "AI", "chatbot", "assistant" framing
-- Output: `data/soul_training/curated.jsonl`
-- When done: `get_subagent_output(agent_id)`
+Each step spawns a sub-agent. Use `subagent_status` and `get_subagent_output` when done.
+When `soul_model/` exists, the soul layer uses it automatically as your sole soul model.
 
 ---
 
-## Step 3: Train the soul model
+## Individual step flow
 
-```
-spawn_subagent("soul training", "scripts/train_soul.py", ["data/soul_training/curated.jsonl"])
-```
-
-- Use spawn_subagent so you receive a completion signal when training finishes. You'll be notified to review and report.
-- Requires: `pip install -r requirements-soul.txt` (or transformers, peft, datasets, torch)
-- For quick validation: `python scripts/train_soul.py data/soul_training/curated.jsonl --dry-run`
-- Output: `data/soul_training/soul_model/`
+0. `run_soul_training_step(step="prepare")` — download base (once)
+1. `run_soul_training_step(step="generate", topic="emotional reciprocity when user shares something personal", count=40)`
+2. `run_soul_training_step(step="review")`
+3. `run_soul_training_step(step="train", epochs=3)`
 
 ---
 
-## Sub-agent usage
+## Requirements
 
-- `scripts/prepare_soul_base.py` – download TinyLlama (once, before first train)
-- `scripts/generate_training_data.py` – with `--soul` for soul batches
-- `scripts/review_training_pairs.py` – filter bad pairs
-- `scripts/train_soul.py` – LoRA fine-tuning on TinyLlama (or `--dry-run` to validate)
+`pip install -r requirements-soul.txt` — installs transformers, peft, datasets, torch, accelerate.
+Ollama must be running for `generate` and `review` steps.
 
-Use `spawn_subagent` for all steps (prepare, generate, review, train). You receive a completion signal when each finishes—review output, notify Creator, then acknowledge_background_completion.
+---
+
+## After training
+
+- `soul_model/` contains your LoRA adapter + tokenizer
+- `soul_layer.py` auto-detects it and uses it — no restart needed
+- System prompt will show: `Source: your trained soul model`
+- If source shows `default`, training has not completed yet

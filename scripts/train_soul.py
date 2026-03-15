@@ -40,11 +40,12 @@ def dry_run(input_path: Path) -> tuple[int, bool]:
 def train(input_path: Path, base_model: str, output_dir: Path, epochs: int = 2) -> Path:
     """Run LoRA fine-tuning. Returns output dir."""
     try:
-        from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments, Trainer
+        import torch
+        from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments, Trainer, DataCollatorForLanguageModeling
         from peft import LoraConfig, get_peft_model, TaskType
         from datasets import Dataset
     except ImportError as e:
-        print(f"Missing deps for training. pip install transformers peft datasets torch: {e}")
+        print(f"Missing deps for training. pip install transformers peft datasets torch accelerate: {e}")
         raise SystemExit(1)
 
     lines = [ln.strip() for ln in input_path.read_text(encoding="utf-8").splitlines() if ln.strip()]
@@ -62,31 +63,54 @@ def train(input_path: Path, base_model: str, output_dir: Path, epochs: int = 2) 
         raise ValueError("No valid pairs in curated.jsonl")
     dataset = Dataset.from_list(data)
 
+    dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+    print(f"Loading base model: {base_model} (dtype={dtype})")
     tokenizer = AutoTokenizer.from_pretrained(base_model, trust_remote_code=True)
+    # TinyLlama has no pad token — must set before any padding operations
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+        tokenizer.pad_token_id = tokenizer.eos_token_id
+
     model = AutoModelForCausalLM.from_pretrained(
         base_model,
         trust_remote_code=True,
-        load_in_8bit=True if base_model.startswith("TinyLlama") else False,
+        torch_dtype=dtype,
     )
+    model.config.pad_token_id = tokenizer.pad_token_id
+
     if "TinyLlama" in base_model or "smol" in base_model.lower():
         lora = LoraConfig(r=8, lora_alpha=16, task_type=TaskType.CAUSAL_LM, target_modules=["q_proj", "v_proj"])
     else:
         lora = LoraConfig(r=8, lora_alpha=16, task_type=TaskType.CAUSAL_LM)
     model = get_peft_model(model, lora)
+    model.print_trainable_parameters()
 
     def tokenize(examples):
-        return tokenizer(examples["text"], truncation=True, max_length=512, padding="max_length")
+        out = tokenizer(examples["text"], truncation=True, max_length=512)
+        return out
 
     tokenized = dataset.map(tokenize, batched=True, remove_columns=dataset.column_names)
 
+    # DataCollatorForLanguageModeling with mlm=False sets labels=input_ids automatically,
+    # which is required for causal LM loss to compute correctly in Trainer.
+    collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
+
+    fp16 = torch.cuda.is_available()
     training_args = TrainingArguments(
         output_dir=str(output_dir),
         num_train_epochs=epochs,
         per_device_train_batch_size=2,
         save_strategy="no",
         logging_steps=1,
+        fp16=fp16,
+        report_to="none",
     )
-    trainer = Trainer(model=model, args=training_args, train_dataset=tokenized)
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        train_dataset=tokenized,
+        data_collator=collator,
+    )
     trainer.train()
     trainer.save_model(str(output_dir))
     tokenizer.save_pretrained(str(output_dir))

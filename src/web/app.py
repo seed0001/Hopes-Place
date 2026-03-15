@@ -21,9 +21,6 @@ agent: AssistiveAgent | None = None
 _discord_task: asyncio.Task | None = None
 _background_thoughts_task: asyncio.Task | None = None
 _status_check_task: asyncio.Task | None = None
-_chance_reminder_task: asyncio.Task | None = None
-
-
 async def _status_check_loop():
     """Periodic self-diagnostic: sub-agent status. Alert only when issues first appear, not every poll."""
     STATUS_INTERVAL = 600  # 10 min
@@ -66,44 +63,6 @@ async def _status_check_loop():
             try:
                 from src.logging_config import log_error
                 log_error("status_check_loop", e)
-            except Exception:
-                pass
-
-
-async def _chance_reminder_loop():
-    """Send Chance reminders only at 8–9 AM and 7–8 PM local time, once per window per day."""
-    from src.reminders import (
-        should_send_chance_reminder,
-        record_chance_reminder_sent,
-        get_chance_reminder_message,
-    )
-    from config.settings import DISCORD_OWNER_ID
-
-    CHECK_INTERVAL = 300  # 5 min
-    while True:
-        await asyncio.sleep(CHECK_INTERVAL)
-        if agent is None or not DISCORD_OWNER_ID:
-            continue
-        try:
-            if not should_send_chance_reminder("default"):
-                continue
-            msg = get_chance_reminder_message()
-            record_chance_reminder_sent("default")
-            from src import notifications
-            try:
-                from src.agent import soul
-                title = (soul.load_soul().get("agent_name") or "").strip() or "Software Lifeform"
-            except Exception:
-                title = "Software Lifeform"
-            notifications.emit_notification("proactive", title, msg, {"content": msg})
-            from src.outreach import queue_outreach
-            queue_outreach("discord", msg, target_user_id=DISCORD_OWNER_ID)
-        except asyncio.CancelledError:
-            break
-        except Exception as e:
-            try:
-                from src.logging_config import log_error
-                log_error("chance_reminder", e)
             except Exception:
                 pass
 
@@ -170,13 +129,12 @@ def _on_subagent_complete(aid: str, task: str, status: str):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global agent, _discord_task, _background_thoughts_task, _status_check_task, _chance_reminder_task
+    global agent, _discord_task, _background_thoughts_task, _status_check_task
     agent = AssistiveAgent(user_id="default")
     from src.tools import subagents
     subagents.set_completion_callback(_on_subagent_complete)
     _background_thoughts_task = asyncio.create_task(_background_thoughts_loop())
     _status_check_task = asyncio.create_task(_status_check_loop())
-    _chance_reminder_task = asyncio.create_task(_chance_reminder_loop())
     # Start Discord bot (and outreach consumer) if configured
     try:
         from src.discord_bot import set_agent, start_discord_task
@@ -196,12 +154,6 @@ async def lifespan(app: FastAPI):
         _status_check_task.cancel()
         try:
             await _status_check_task
-        except asyncio.CancelledError:
-            pass
-    if _chance_reminder_task and not _chance_reminder_task.done():
-        _chance_reminder_task.cancel()
-        try:
-            await _chance_reminder_task
         except asyncio.CancelledError:
             pass
     if _discord_task and not _discord_task.done():
@@ -301,6 +253,9 @@ async def api_memory_view():
         "working": m.get_working_view(),
         "thoughts": m.get_thoughts_view(),
         "biology": agent.biology.get_view(),
+        "existential": agent.existential.get_view(),
+        "values_vault": __import__("src.values_vault", fromlist=["get_view"]).get_view(),
+        "presence": __import__("src.presence", fromlist=["get_view"]).get_view(),
         "image_usage": image_gen.get_usage_data(),
         "subagents": agent_core._get_subagent_manager().status(),
     }

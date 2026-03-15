@@ -16,13 +16,14 @@ LOGS_DIR = PROJECT_ROOT / "logs"
 KNOWLEDGE_DIR = PROJECT_ROOT / "knowledge"
 RESEARCH_OUTPUT_DIR = DATA_DIR / "research_output"
 TRAINING_DATA_DIR = DATA_DIR / "training_data"
+SOUL_TRAINING_DIR = DATA_DIR / "soul_training"
 
 # Generated images (gitignored). Override with IMAGE_OUTPUT_DIR env (e.g. ~/Pictures/Adam).
 IMAGE_OUTPUT_DIR = Path(
     os.getenv("IMAGE_OUTPUT_DIR", str(PROJECT_ROOT / "generated_images"))
 ).expanduser().resolve()
 
-for d in (DATA_DIR, MEMORY_DIR, USER_PROFILES_DIR, LOGS_DIR, KNOWLEDGE_DIR, RESEARCH_OUTPUT_DIR, TRAINING_DATA_DIR):
+for d in (DATA_DIR, MEMORY_DIR, USER_PROFILES_DIR, LOGS_DIR, KNOWLEDGE_DIR, RESEARCH_OUTPUT_DIR, TRAINING_DATA_DIR, SOUL_TRAINING_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
 # xAI Grok
@@ -44,3 +45,6 @@ CURSOR_API_KEY = os.getenv("CURSOR_API_KEY", "")
 # Discord (bot + proactive outreach)
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN", "")
 DISCORD_OWNER_ID = os.getenv("DISCORD_OWNER_ID", "")  # Primary owner Discord ID for DMs
+
+# Soul training base model (Hugging Face)
+SOUL_BASE_MODEL = os.getenv("SOUL_BASE_MODEL", "TinyLlama/TinyLlama-1.1B-Chat-v1.0")

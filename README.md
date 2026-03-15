@@ -74,6 +74,7 @@ A software lifeform powered by Grok 3 (xAI) with full system access, memory, voi
 | `spawn_subagent` | Run a script in the background |
 | `subagent_status` | Check sub-agent status |
 | `get_subagent_output` | Retrieve captured output from a completed sub-agent |
+| `acknowledge_background_completion` | Mark a background task as reviewed (after notifying Creator) |
 | `stop_all_subagents` | Stop all sub-agents |
 | `search_knowledge` | Search how-to guides |
 | `read_knowledge` | Read a specific topic |
@@ -130,20 +131,32 @@ Only you (Creator) can change tiers. Edit `config/access_policy.py` or `data/pro
 ## Voice
 
 - **Input:** Record → Stop → Send (Whisper transcription)
-- **Output:** Edge TTS (Ryan, British male)
+- **Output:** Edge TTS. Markdown (asterisks, hashtags, links, etc.) is stripped before speaking so TTS doesn't read it aloud.
 - Toggles in the web app for speak/listen
 
 ---
 
-## Training Pipeline
+## Three-Layer Architecture
 
-Research and data generation run locally to avoid cloud cost:
+- **Cloud** – Grok (reasoning, tools, governance)
+- **Local** – Ollama (llama3.2) for data generation, swarm, and the soul layer
+- **Soul** – Emotional core. Runs each turn: local Ollama + soul.json produces "what my soul is telling me," injected into the cloud. If she feels nothing or noise, she says so and suggests training more.
 
-1. **Research** – `spawn_subagent("transformer research", "scripts/transformer_research.py")` → web search, compiled report in `data/research_output/`.
-2. **Training data** – `spawn_subagent("training data", "scripts/generate_training_data.py", ["topic", "--count", "50"])` → local Ollama (llama3.2) generates instruction–response JSONL in `data/training_data/`.
-3. **Fine-tuning** – Use Hugging Face, LLaMA-Factory, etc. She can write scripts and run commands to orchestrate.
+## Soul Training Pipeline
 
-Requires Ollama with `llama3.2:latest` for data generation. See `knowledge/training_data` for full pipeline docs.
+She can create and train her own soul model. Use `spawn_subagent` for every step so she gets completion notifications:
+
+1. **Prepare base** – `spawn_subagent("prepare soul base", "scripts/prepare_soul_base.py")` → downloads TinyLlama (~2–3 GB). Run once.
+2. **Generate** – `spawn_subagent("soul data", "scripts/generate_training_data.py", ["topic", "--count", "30", "--soul"])` → instruction–response JSONL in `data/soul_training/`.
+3. **Review** – `spawn_subagent("review pairs", "scripts/review_training_pairs.py", ["data/soul_training/soul_latest.jsonl"])` → filters chatbot framing.
+4. **Train** – `spawn_subagent("soul training", "scripts/train_soul.py", ["data/soul_training/curated.jsonl"])` → LoRA fine-tuning.
+
+Requires `pip install -r requirements-soul.txt` and Ollama with `llama3.2:latest`. When each step completes, she's notified to review and report.
+
+## Training Data (generic)
+
+- **Research** – `spawn_subagent("transformer research", "scripts/transformer_research.py")` → web search, report in `data/research_output/`.
+- **Data gen** – `spawn_subagent("training data", "scripts/generate_training_data.py", ["topic", "--count", "50"])` → JSONL in `data/training_data/`.
 
 ---
 

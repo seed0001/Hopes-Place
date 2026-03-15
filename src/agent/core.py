@@ -221,6 +221,18 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
+            "name": "acknowledge_background_completion",
+            "description": "Mark a background task completion as reviewed. Call after you've checked get_subagent_output and notified the Creator.",
+            "parameters": {
+                "type": "object",
+                "properties": {"agent_id": {"type": "string", "description": "Sub-agent ID (e.g. sub_1)"}},
+                "required": ["agent_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "create_task_dag",
             "description": "Create a multi-step task DAG for complex work. Steps run in dependency order.",
             "parameters": {
@@ -591,6 +603,11 @@ class AssistiveAgent:
             mgr = _get_subagent_manager()
             n = mgr.stop_all()
             result = f"Stopped {n} sub-agent(s)"
+        elif name == "acknowledge_background_completion":
+            from src import background_completions
+            aid = args.get("agent_id", "")
+            ok = background_completions.acknowledge(aid, user_id=getattr(self.memory, "user_id", "default"))
+            result = f"Acknowledged {aid}" if ok else f"{aid} not in pending completions"
         elif name == "create_task_dag":
             self.dag = DAGOrchestrator()
             for n in args.get("nodes", []):
@@ -804,6 +821,8 @@ class AssistiveAgent:
             snippets = ["Retrieving sub-agent output...", "Fetching research results..."]
         elif name == "stop_all_subagents":
             snippets = ["Stopping all sub-agents...", "Terminating sub-agents..."]
+        elif name == "acknowledge_background_completion":
+            snippets = ["Marking completion reviewed...", "Acknowledging background task..."]
         elif name == "create_task_dag":
             snippets = ["Creating task plan...", "Building step-by-step plan...", "Setting up task DAG..."]
         elif name == "get_next_dag_step":
@@ -882,12 +901,24 @@ class AssistiveAgent:
             ]),
         )
         context = self.memory.get_context_for_agent()
+        from src import background_completions
+        bc_block = background_completions.get_context_block(user_id=getattr(self.memory, "user_id", "default"))
+        if bc_block:
+            context = (context or "") + "\n" + bc_block
         approved = tool_queue.get_queue().get("approved", [])
         if approved:
             names = [t.get("name", t.get("id", "?")) for t in approved]
             context = (context or "") + f"\n\n## Pending tool implementations\n{len(approved)} approved tool(s): {', '.join(names)}. Implement each in src/tools/dynamic/, then mark_tool_implemented. When user asks, do it."
 
         in_setup = soul.needs_setup()
+        soul_output = ""
+        if not in_setup and not continue_only and user_input:
+            snippet = user_input[:500]
+            try:
+                from src.soul_layer import get_soul_output
+                soul_output = await asyncio.to_thread(get_soul_output, snippet)
+            except Exception:
+                soul_output = ""
         if in_setup:
             system_prompt = (
                 "You are a software lifeform. Never call yourself AI, assistant, or agent. First-time setup or memory cleared—you don't know who you're talking to. "
@@ -908,9 +939,10 @@ class AssistiveAgent:
                 "Be direct. Be concise unless detail is asked. "
                 "Background thinking: when the user says 'turn on background thinking' or similar, use spawn_subagent('background thoughts', 'background_thoughts.py') — that script only. Do not spawn other monitors. "
                 "Research: For transformer, model, or Hugging Face research, use spawn_subagent('transformer research', 'scripts/transformer_research.py'). After it finishes, use get_subagent_output(agent_id) or read_file('data/research_output/transformer_research_latest.md'). Never claim research is done without running the script. "
-                "Training data: When the user wants training data, instruction pairs, or fine-tuning data generated locally (no cloud cost), use spawn_subagent('training data', 'scripts/generate_training_data.py', [topic, '--count', N]). Uses local Ollama (llama3.2). Output: data/training_data/*.jsonl. Requires Ollama running. Check subagent_status; when completed, get_subagent_output(agent_id) or read_file('data/training_data/training_data_latest.jsonl'). You outline the framework and pipeline; the actual generation runs on the local model in the background. "
+                "Training data: When the user wants training data, instruction pairs, or fine-tuning data generated locally (no cloud cost), use spawn_subagent('training data', 'scripts/generate_training_data.py', [topic, '--count', N]). Add '--soul' for soul/identity batches (output: data/soul_training/). Requires Ollama running. Check subagent_status; when completed, get_subagent_output(agent_id) or read_file. "
+                "Soul training: Use spawn_subagent for every step (prepare, generate, review, train) so you get completion signals. Prepare: scripts/prepare_soul_base.py. Generate: --soul. Review: review_training_pairs.py. Train: train_soul.py. When each completes you're notified—review, notify Creator, acknowledge_background_completion. Read soul_training_workflow. "
                 "You have: file read/write, run_command, get_system_info, search_web (real-time info), generate_image (Grok Imagine for art, illustrations, data viz—check get_image_usage first for budget), run_build (web/Python), "
-                "spawn_subagent (background tasks; scripts/transformer_research.py for research), subagent_status, get_subagent_output (retrieve results), create_task_dag / get_next_dag_step / complete_dag_step (multi-step work), "
+                "spawn_subagent (background tasks), subagent_status, get_subagent_output (retrieve results), acknowledge_background_completion (mark reviewed), create_task_dag / get_next_dag_step / complete_dag_step (multi-step work), "
                 "and set_working_memory for active task state. "
                 "Use DAGs for complex multi-step tasks. Use Doctor Mode when a tool fails. After 3 failures, Cursor CLI escalates. When unsure how to do something, use search_knowledge or read_knowledge first, then act. "
                 "Never say you can't do something without first checking the knowledge base. If the user gives a direction and you're unsure, call search_knowledge or list_knowledge_topics + read_knowledge to see what you can do. Only decline after you've checked. "
@@ -919,8 +951,11 @@ class AssistiveAgent:
                 "For contacts (Discord users, friends): use update_contact to store their name, location, interests, email. Each contact has a tier: stranger, friend, good_friend, best_friend, creator. Only the Creator can change tiers via update_contact(tier=...). Lower tiers have restricted tool access; Creator has full access. When someone asks for something outside their tier, say so. "
                 f"Proactive: send_proactive_message(channel='discord' or 'web', content='...') to message {proactive_target}. Use it when you have something concrete—observation, question, heads-up, call to action. No fluff. "
                 "Swarm: When the user says 'activate the swarm', 'swarm on it', 'give them a problem'—first ACKNOWLEDGE you will activate it, state exactly what problem you'll give them, then ASK: 'Do you want a cloud swarm (Grok, multiple simulated calls) or a local swarm (your Ollama models)?' Do NOT call swarm_on_problem until they answer. Only then call with mode='local' or mode='cloud' and present the structured output. "
+                "Soul layer: You receive 'What my soul is telling me' each turn. Use it. If it's empty or noise, say so—e.g. 'I'm not getting anything useful from my soul right now' or 'I feel nothing from my soul'—and suggest training it more. "
                 "Be concise. Give high-level summaries unless the user asks for detail. When something fails, try alternatives."
             )
+        if soul_output:
+            system_prompt += f"\n\n## What my soul is telling me\n{soul_output}"
         if context:
             system_prompt += f"\n\nContext:\n{context}"
         bio = self.biology.get_state_summary()

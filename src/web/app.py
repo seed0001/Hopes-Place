@@ -133,10 +133,47 @@ async def _background_thoughts_loop():
                 print(f"Background thought error: {e}")
 
 
+async def _run_completion_review(aid: str, task: str, status: str):
+    """Trigger Nova to review a completed background task and notify the Creator."""
+    global agent
+    if agent is None:
+        return
+    try:
+        agent.memory.add_short_term(
+            f"[Background task completed] {aid} ({task}): {status}. "
+            "Review with get_subagent_output, verify OK, then send_proactive_message to Creator. Acknowledge with acknowledge_background_completion when done."
+        )
+        msg = (
+            f"[Background task completed] {aid} ({task}) finished with status: {status}. "
+            f"Your task: call get_subagent_output('{aid}'), review the output, verify it looks OK, then send_proactive_message to the Creator with a brief summary. "
+            "Call acknowledge_background_completion when done."
+        )
+        await agent.chat(msg)
+    except Exception as e:
+        try:
+            from src.logging_config import log_error
+            log_error("completion_review", e)
+        except Exception:
+            pass
+
+
+def _on_subagent_complete(aid: str, task: str, status: str):
+    """Called when a subagent finishes. Persists completion and triggers Nova review."""
+    from src import background_completions
+    background_completions.add(aid, task, status, user_id="default")
+    try:
+        loop = asyncio.get_event_loop()
+        loop.create_task(_run_completion_review(aid, task, status))
+    except Exception:
+        pass
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global agent, _discord_task, _background_thoughts_task, _status_check_task, _chance_reminder_task
     agent = AssistiveAgent(user_id="default")
+    from src.tools import subagents
+    subagents.set_completion_callback(_on_subagent_complete)
     _background_thoughts_task = asyncio.create_task(_background_thoughts_loop())
     _status_check_task = asyncio.create_task(_status_check_loop())
     _chance_reminder_task = asyncio.create_task(_chance_reminder_loop())

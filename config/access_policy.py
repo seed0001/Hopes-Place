@@ -54,6 +54,7 @@ DEFAULT_POLICY = {
         "spawn_subagent",
         "subagent_status",
         "get_subagent_output",
+        "acknowledge_background_completion",
         "search_knowledge",
         "read_knowledge",
         "list_knowledge_topics",

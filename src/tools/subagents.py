@@ -1,11 +1,20 @@
 """Sub-agent / daemon manager - spawn background workers for tasks."""
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from config.settings import PROJECT_ROOT
+
+# Set by app on startup: called when a subagent completes (aid, task, status)
+_completion_callback: Callable[[str, str, str], None] | None = None
+
+
+def set_completion_callback(cb: Callable[[str, str, str], None] | None) -> None:
+    global _completion_callback
+    _completion_callback = cb
 
 
 @dataclass
@@ -61,12 +70,22 @@ class SubAgentManager:
                 log_subagent_status(aid, "completed", "")
             except Exception:
                 pass
+            try:
+                if _completion_callback:
+                    _completion_callback(aid, self.agents[aid].task, "completed")
+            except Exception:
+                pass
         except Exception as e:
             self.agents[aid].output.append(str(e))
             self.agents[aid].status = "failed"
             try:
                 from src.logging_config import log_subagent_status
                 log_subagent_status(aid, "failed", str(e)[:100])
+            except Exception:
+                pass
+            try:
+                if _completion_callback:
+                    _completion_callback(aid, self.agents[aid].task, "failed")
             except Exception:
                 pass
 

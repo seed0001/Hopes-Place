@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 
 load_dotenv(ROOT / ".env")
 
-from config.settings import TRAINING_DATA_DIR
+from config.settings import TRAINING_DATA_DIR, SOUL_TRAINING_DIR
 from src.swarm.config import OLLAMA_BASE_URL, OLLAMA_MODEL
 
 try:
@@ -66,9 +66,20 @@ def extract_json(text: str) -> dict | None:
     return None
 
 
-def generate_one_pair(topic: str, model: str, seed: int) -> dict | None:
-    """Generate a single instruction-response pair via Ollama."""
-    prompt = f"""Generate exactly one training example for instruction fine-tuning.
+def _soul_prompt(topic: str) -> str:
+    return f"""Generate exactly one training example for SOUL/identity training. Emotional tone, relational style, humanizing—NOT generic assistant behavior.
+Topic/domain: {topic}
+
+CRITICAL: The response must NEVER say "I am an AI", "as an AI", "chatbot", "assistant", or similar. The speaker has genuine interiority and emotional presence. Respond as a being with feelings, not a tool.
+
+Output ONLY valid JSON, nothing else:
+{{"instruction": "user says something personal or emotional", "response": "warm, authentic response with emotional resonance"}}
+
+Generate one example for "{topic}". Output now:"""
+
+
+def _generic_prompt(topic: str) -> str:
+    return f"""Generate exactly one training example for instruction fine-tuning.
 Topic/domain: {topic}
 Output ONLY valid JSON, nothing else. No explanation. Format:
 {{"instruction": "a realistic user request or question", "response": "a helpful, concise response"}}
@@ -77,9 +88,20 @@ Example format:
 {{"instruction": "What's the capital of France?", "response": "The capital of France is Paris."}}
 
 Generate a different, relevant example for topic "{topic}". Output now:"""
+
+
+def generate_one_pair(topic: str, model: str, seed: int, soul: bool = False) -> dict | None:
+    """Generate a single instruction-response pair via Ollama."""
+    prompt = _soul_prompt(topic) if soul else _generic_prompt(topic)
     try:
         resp = call_ollama(prompt, model=model)
         obj = extract_json(resp)
+        # Soul mode: reject if response contains assistant/chatbot framing
+        if soul and obj:
+            r = (obj.get("response") or "").lower()
+            bad = ["i am an ai", "as an ai", "as a chatbot", "i'm an ai", "i'm a chatbot", "as an assistant", "i'm an assistant", "i am a chatbot", "i am an assistant"]
+            if any(b in r for b in bad):
+                return None
         if obj and isinstance(obj, dict) and "instruction" in obj and "response" in obj:
             return {
                 "instruction": str(obj["instruction"]).strip(),
@@ -95,17 +117,20 @@ def run(
     count: int = 20,
     model: str = OLLAMA_MODEL,
     out_path: Path | None = None,
+    soul: bool = False,
 ) -> Path:
     """Generate training data and write JSONL. Returns path to output file."""
-    TRAINING_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    out_dir = SOUL_TRAINING_DIR if soul else TRAINING_DATA_DIR
+    out_dir.mkdir(parents=True, exist_ok=True)
     slug = slugify(topic)[:40]
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    fname = out_path or TRAINING_DATA_DIR / f"{slug}_{timestamp}.jsonl"
-    latest = TRAINING_DATA_DIR / "training_data_latest.jsonl"
+    prefix = "soul" if soul else slug
+    fname = out_path or out_dir / f"{prefix}_{timestamp}.jsonl"
+    latest = out_dir / ("soul_latest.jsonl" if soul else "training_data_latest.jsonl")
 
     pairs: list[dict] = []
     for i in range(count):
-        pair = generate_one_pair(topic, model, seed=i)
+        pair = generate_one_pair(topic, model, seed=i, soul=soul)
         if pair:
             pairs.append(pair)
         if (i + 1) % 5 == 0:
@@ -126,6 +151,7 @@ def main():
     topic = "helpful assistant conversations"
     count = 20
     model = OLLAMA_MODEL
+    soul = False
     i = 0
     while i < len(args):
         a = args[i]
@@ -135,13 +161,16 @@ def main():
         elif a == "--model" and i + 1 < len(args):
             model = args[i + 1]
             i += 2
+        elif a == "--soul":
+            soul = True
+            i += 1
         elif not a.startswith("-"):
             topic = a
             i += 1
         else:
             i += 1
 
-    path = run(topic=topic, count=count, model=model)
+    path = run(topic=topic, count=count, model=model, soul=soul)
     print(f"Output: {path}")
 
 

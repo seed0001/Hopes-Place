@@ -161,6 +161,14 @@ def format_for_prompt() -> str:
     if website.get("description"):
         lines.append(website["description"])
 
+    url_l = (website.get("url") or "").lower()
+    if "github.io" in url_l:
+        lines.append(
+            "GitHub Pages: your live static files are in this repo under docs/ "
+            "(e.g. docs/index.html). Edit with write_file, then publish_hope_site() to push. "
+            "See knowledge topic github_pages if unsure."
+        )
+
     active = [p for p in projects if p.get("status") in ("in_progress", "live")]
     if active:
         lines.append("Active projects: " + "; ".join(

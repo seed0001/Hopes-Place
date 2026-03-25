@@ -79,3 +79,8 @@ def list_knowledge_topics() -> str:
     if not docs:
         return "Knowledge base is empty."
     return "Available topics: " + ", ".join(sorted(docs.keys()))
+
+
+def get_topic_names() -> list[str]:
+    """Stem names of all .md topics (for dashboards and APIs)."""
+    return sorted(_load_all_docs().keys())

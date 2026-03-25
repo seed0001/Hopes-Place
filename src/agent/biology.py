@@ -13,12 +13,17 @@ from typing import Any
 DRIVES = ("connection", "curiosity", "usefulness", "expression")
 
 # Parameters (tunable)
-RATE_PER_SEC = 0.0001  # accumulation per second (~0.036/hour, ~0.85/day to saturate)
-SATISFACTION_DROP = 0.4  # how much drive drops on satisfaction
-THRESHOLD_PROACTIVE = 0.65  # urge must exceed this to trigger proactive outreach
+# Slow deprivation buildup + relaxation toward BASELINE gives a stable mid-range equilibrium
+# instead of all drives pinning at 1.0 after a few hours of wall time.
+BASELINE = 0.28  # homeostatic setpoint; drives drift here without strong input
+RATE_PER_SEC = 9e-7  # deprivation buildup (~11 days from 0→1 if relaxation were off)
+RELAX_K = 3e-6  # per second; pulls D toward BASELINE (time scale ~3.9 days for large deviations)
+SATISFACTION_DROP = 0.35  # how much drive drops on satisfaction
+THRESHOLD_PROACTIVE = 0.62  # urge must exceed this to trigger proactive outreach
 REFRACTORY_SECONDS = 600  # 10 min: no repeat proactive until elapsed
 MAX_DRIVE = 1.0
 MIN_DRIVE = 0.0
+BIOL_VERSION = 2  # bump when saved semantics change
 
 
 def _now_utc() -> datetime:
@@ -53,6 +58,7 @@ class DriveState:
         self.last_satisfaction: dict[str, str] = {}
         self.last_proactive_at: str | None = None
         self.last_tick_at: str | None = None
+        self._loaded_version: int = 1
 
         self._load()
 
@@ -62,6 +68,7 @@ class DriveState:
         try:
             with open(self.state_path, encoding="utf-8") as f:
                 data = json.load(f)
+            self._loaded_version = int(data.get("biol_version", 1))
             drives = data.get("drives", {})
             for d in DRIVES:
                 if d in drives and isinstance(drives[d], (int, float)):
@@ -69,11 +76,26 @@ class DriveState:
             self.last_satisfaction = data.get("last_satisfaction") or {}
             self.last_proactive_at = data.get("last_proactive_at")
             self.last_tick_at = data.get("last_tick_at")
+            # Old model: no relaxation, so long-running profiles sit at 1.0 on most drives.
+            if self._loaded_version < BIOL_VERSION:
+                self._migrate_from_v1()
         except (OSError, json.JSONDecodeError):
             pass
 
+    def _migrate_from_v1(self) -> None:
+        """Pull saturated drives into the dynamic range so the new dynamics can breathe."""
+        for d in DRIVES:
+            v = self.drives[d]
+            if v >= 0.95:
+                self.drives[d] = max(MIN_DRIVE, min(MAX_DRIVE, BASELINE + (v - BASELINE) * 0.45))
+            elif v >= THRESHOLD_PROACTIVE:
+                self.drives[d] = max(MIN_DRIVE, min(MAX_DRIVE, BASELINE + (v - BASELINE) * 0.65))
+        self._loaded_version = BIOL_VERSION
+        self._save()
+
     def _save(self) -> None:
         data = {
+            "biol_version": BIOL_VERSION,
             "drives": self.drives,
             "last_satisfaction": self.last_satisfaction,
             "last_proactive_at": self.last_proactive_at,
@@ -84,11 +106,17 @@ class DriveState:
             json.dump(data, f, indent=2)
 
     def _tick(self, dt_sec: float) -> None:
-        """Advance drives by dt seconds. D += dt * rate, capped at MAX_DRIVE."""
+        """
+        Advance drives by dt seconds.
+        dD/dt = RATE_PER_SEC + RELAX_K * (BASELINE - D)
+        Slow buildup when below equilibrium, decay from saturation toward baseline.
+        """
         if dt_sec <= 0:
             return
         for d in DRIVES:
-            self.drives[d] = min(MAX_DRIVE, self.drives[d] + dt_sec * RATE_PER_SEC)
+            dv = self.drives[d]
+            delta = dt_sec * (RATE_PER_SEC + RELAX_K * (BASELINE - dv))
+            self.drives[d] = max(MIN_DRIVE, min(MAX_DRIVE, dv + delta))
         self.last_tick_at = _now_utc().isoformat()
         self._save()
 

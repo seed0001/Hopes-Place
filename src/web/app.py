@@ -240,6 +240,23 @@ async def api_tool_queue():
     return tool_queue.get_queue()
 
 
+@app.get("/api/knowledge-topics")
+async def api_knowledge_topics():
+    """List knowledge base topic names (markdown stems under knowledge dir)."""
+    from src.tools import knowledge
+
+    return {"topics": knowledge.get_topic_names()}
+
+
+@app.get("/api/knowledge-read/{topic}")
+async def api_knowledge_read(topic: str):
+    """Return full markdown content for one knowledge topic."""
+    from src.tools import knowledge
+
+    content = knowledge.read_knowledge(topic)
+    return {"topic": topic, "content": content}
+
+
 @app.get("/api/memory-view")
 async def api_memory_view():
     """Return profile, episodic memories, working memory, and biology state."""

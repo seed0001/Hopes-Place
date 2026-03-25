@@ -3,8 +3,8 @@ openai>=1.0.0
 python-dotenv>=1.0.0
 pydantic>=2.0.0
 
-# Web server
-fastapi>=0.109.0
+# Web server (FastAPI <0.133 breaks with Starlette 1.x: Router on_startup)
+fastapi>=0.133.0
 uvicorn[standard]>=0.27.0
 python-multipart>=0.0.6
 

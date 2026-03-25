@@ -1083,6 +1083,53 @@ class AssistiveAgent:
             snippets = [f"Running {name}...", f"Calling {name}...", f"Using {name}..."]
         self._narrate(q, random.choice(snippets))
 
+    async def _humanize_if_robotic(
+        self,
+        draft: str,
+        system_prompt: str,
+        narrate_queue: asyncio.Queue | None = None,
+    ) -> str:
+        """Run a final pass that rewrites replies if they sound robotic."""
+        if not (draft or "").strip():
+            return draft
+
+        self._narrate(narrate_queue, "Final voice pass...")
+
+        review_prompt = (
+            "You are a final response voice critic. Decide if the draft sounds robotic, templated, "
+            "overly formal, or like a generic assistant. Prioritize natural, lifelike language. "
+            "If the draft already sounds natural, keep it unchanged.\n\n"
+            "Return STRICT JSON only:\n"
+            '{"robotic": true|false, "rewritten": "<final text>", "reason": "<short reason>"}'
+        )
+        review_messages = [
+            {"role": "system", "content": review_prompt},
+            {
+                "role": "user",
+                "content": (
+                    f"Identity and behavior context:\n{system_prompt[:7000]}\n\n"
+                    f"Draft response:\n{draft}"
+                ),
+            },
+        ]
+
+        try:
+            review = await self.client.chat.completions.create(
+                model=self.model,
+                messages=review_messages,
+                tool_choice="none",
+            )
+            payload = (review.choices[0].message.content or "").strip()
+            data = json.loads(payload)
+            rewritten = str(data.get("rewritten", "")).strip()
+            robotic = bool(data.get("robotic", False))
+            if rewritten:
+                return rewritten if robotic else (rewritten or draft)
+        except Exception as e:
+            log_error("humanize_pass", e)
+
+        return draft
+
     async def chat(
         self,
         user_input: str = "",
@@ -1344,6 +1391,8 @@ class AssistiveAgent:
             self._failed_tool_names = []
             self._failed_tool_results = []
             return await self.chat(escalation_text=escalation, narrate_queue=narrate_queue)
+
+        content = await self._humanize_if_robotic(content, system_prompt, narrate_queue=narrate_queue)
 
         self._tool_round = 0  # reset for next turn
         self._narrate(narrate_queue, "Done.")

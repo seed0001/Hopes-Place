@@ -24,152 +24,90 @@
       touch-action: manipulation;
     }
 
-    .app {
+    .shell {
       height: 100vh;
+      height: 100dvh;
+      display: flex;
+      flex-direction: row;
+      min-height: 0;
+    }
+
+    .side-nav {
+      width: 11rem;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+      padding: 0.75rem 0.5rem;
+      border-right: 1px solid rgba(80, 120, 180, 0.35);
+      background: rgba(6, 10, 18, 0.98);
+    }
+
+    .nav-item {
+      font-family: inherit;
+      font-size: 0.8rem;
+      text-align: left;
+      padding: 0.65rem 0.75rem;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      background: transparent;
+      color: #8899bb;
+      cursor: pointer;
+      transition: color 0.15s, background 0.15s, border-color 0.15s;
+    }
+    .nav-item:hover {
+      color: #c0d8ff;
+      background: rgba(40, 70, 120, 0.25);
+    }
+    .nav-item.active {
+      color: #d0e8ff;
+      background: rgba(50, 90, 160, 0.35);
+      border-color: rgba(100, 160, 255, 0.35);
+    }
+
+    .main-area {
+      flex: 1;
+      min-width: 0;
+      min-height: 0;
       display: flex;
       flex-direction: column;
       position: relative;
     }
 
-    /* Atom centerpiece */
-    .centerpiece {
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      width: min(360px, 85vw);
-      height: min(360px, 85vw);
-      perspective: 750px;
-      pointer-events: none;
-      z-index: 0;
+    .panel {
+      display: none;
+      flex: 1;
+      flex-direction: column;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .panel.active {
+      display: flex;
     }
 
-    .atom {
-      width: 100%;
-      height: 100%;
-      position: relative;
-      transform-style: preserve-3d;
-      animation: atomSpin 24s linear infinite;
+    .panel-header {
+      flex-shrink: 0;
+      padding: 0.65rem 1rem;
+      border-bottom: 1px solid rgba(80, 120, 180, 0.25);
+      font-size: 0.75rem;
+      font-weight: 500;
+      color: #7a9ed0;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
     }
 
-    /* Nucleus (protons) */
-    .nucleus {
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      width: 36px;
-      height: 36px;
-      margin: -18px 0 0 -18px;
-      background: radial-gradient(circle at 30% 30%, rgba(200, 220, 255, 0.95), rgba(80, 120, 200, 0.8));
-      border-radius: 50%;
-      box-shadow: 0 0 20px rgba(100, 160, 255, 0.7), 0 0 40px rgba(80, 120, 255, 0.4);
-      animation: nucleusPulse 2.5s ease-in-out infinite;
+    .panel-body {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 1rem 1.25rem;
     }
 
-    /* Orbital rings (electron shells) */
-    .orbit {
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      border: 1px solid rgba(100, 180, 255, 0.4);
-      border-radius: 50%;
-      transform-style: preserve-3d;
-    }
-
-    .orbit-1 {
-      width: 180px;
-      height: 180px;
-      margin: -90px 0 0 -90px;
-      transform: rotateX(70deg) rotateZ(0deg);
-      animation: orbitRotate1 8s linear infinite;
-    }
-
-    .orbit-2 {
-      width: 255px;
-      height: 255px;
-      margin: -128px 0 0 -128px;
-      transform: rotateY(60deg) rotateX(70deg) rotateZ(0deg);
-      border-color: rgba(150, 120, 255, 0.35);
-      animation: orbitRotate2 12s linear infinite reverse;
-    }
-
-    .orbit-3 {
-      width: 300px;
-      height: 300px;
-      margin: -150px 0 0 -150px;
-      transform: rotateY(120deg) rotateX(70deg) rotateZ(0deg);
-      border-color: rgba(100, 220, 200, 0.3);
-      animation: orbitRotate3 16s linear infinite;
-    }
-
-    /* Electrons */
-    .electron {
-      position: absolute;
-      width: 12px;
-      height: 12px;
-      background: radial-gradient(circle, rgba(150, 220, 255, 1), rgba(80, 150, 255, 0.8));
-      border-radius: 50%;
-      box-shadow: 0 0 18px rgba(100, 200, 255, 0.9), 0 0 36px rgba(80, 180, 255, 0.5);
-      top: -6px;
-      left: 50%;
-      margin-left: -6px;
-    }
-
-    .orbit-2 .electron {
-      width: 9px;
-      height: 9px;
-      margin-left: -5px;
-      top: -5px;
-      background: radial-gradient(circle, rgba(180, 150, 255, 1), rgba(120, 100, 200, 0.8));
-      box-shadow: 0 0 10px rgba(150, 120, 255, 0.8);
-    }
-
-    .orbit-3 .electron {
-      width: 9px;
-      height: 9px;
-      margin-left: -5px;
-      top: -5px;
-      background: radial-gradient(circle, rgba(100, 255, 220, 1), rgba(80, 200, 180, 0.8));
-      box-shadow: 0 0 10px rgba(100, 220, 200, 0.8);
-    }
-
-    .orbit-2 .electron:nth-child(2) {
-      top: auto;
-      bottom: -5px;
-      left: 50%;
-      margin-left: -5px;
-    }
-
-    .orbit-3 .electron:nth-child(2) {
-      top: auto;
-      bottom: -5px;
-      left: 50%;
-      margin-left: -5px;
-    }
-
-    @keyframes atomSpin {
-      from { transform: rotateY(0deg) rotateX(10deg); }
-      to { transform: rotateY(360deg) rotateX(10deg); }
-    }
-
-    @keyframes orbitRotate1 {
-      from { transform: rotateX(70deg) rotateZ(0deg); }
-      to { transform: rotateX(70deg) rotateZ(360deg); }
-    }
-
-    @keyframes orbitRotate2 {
-      from { transform: rotateY(60deg) rotateX(70deg) rotateZ(0deg); }
-      to { transform: rotateY(60deg) rotateX(70deg) rotateZ(360deg); }
-    }
-
-    @keyframes orbitRotate3 {
-      from { transform: rotateY(120deg) rotateX(70deg) rotateZ(0deg); }
-      to { transform: rotateY(120deg) rotateX(70deg) rotateZ(360deg); }
-    }
-
-    @keyframes nucleusPulse {
-      0%, 100% { opacity: 1; transform: scale(1); }
-      50% { opacity: 0.95; transform: scale(1.08); }
+    .panel-chat-inner {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
     }
 
     /* Messages - grow up from bottom */
@@ -380,40 +318,15 @@
     }
     .toggle.on::after { transform: translateX(14px); }
 
-    .tools-toggle, .memory-toggle {
-      padding: 0.5rem 0.25rem;
-      min-height: 44px;
-      display: inline-flex;
-      align-items: center;
+    .tools-inner {
+      max-width: 52rem;
     }
-    .tools-toggle {
-      font-size: 0.75rem;
-      color: #666;
-      cursor: pointer;
-      margin-top: 0.5rem;
-      text-decoration: underline;
-    }
-    .tools-toggle:hover { color: #999; }
-
-    .tools-panel {
-      display: none;
-      background: rgba(10, 15, 25, 0.95);
-      border: 1px solid rgba(80, 120, 180, 0.3);
-      border-radius: 8px;
-      padding: 1rem;
-      margin: 0 1.5rem 1rem;
-      max-height: 200px;
-      overflow-y: auto;
-      z-index: 3;
-    }
-    .tools-panel.open { display: block; }
-
-    .tools-panel h4 {
+    .tools-inner h4 {
       font-size: 0.8rem;
       color: #a0c0ff;
       margin-bottom: 0.5rem;
     }
-    .tools-panel .tool-item {
+    .tools-inner .tool-item {
       font-size: 0.8rem;
       padding: 0.4rem;
       background: rgba(0,20,40,0.5);
@@ -424,9 +337,9 @@
       justify-content: space-between;
       gap: 0.5rem;
     }
-    .tools-panel .tool-item span { flex: 1; overflow: hidden; text-overflow: ellipsis; }
-    .tools-panel .tool-btns { display: flex; gap: 0.3rem; }
-    .tools-panel .tool-btns button {
+    .tools-inner .tool-item span { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+    .tools-inner .tool-btns { display: flex; gap: 0.3rem; }
+    .tools-inner .tool-btns button {
       font-size: 0.7rem;
       padding: 0.2rem 0.5rem;
       border-radius: 4px;
@@ -435,8 +348,8 @@
       color: #a0c8ff;
       cursor: pointer;
     }
-    .tools-panel .tool-btns button.reject { border-color: rgba(180,80,80,0.5); color: #ffa0a0; }
-    .tools-panel .reload-btn {
+    .tools-inner .tool-btns button.reject { border-color: rgba(180,80,80,0.5); color: #ffa0a0; }
+    .tools-inner .reload-btn {
       margin-top: 0.5rem;
       font-size: 0.75rem;
       padding: 0.3rem 0.6rem;
@@ -447,34 +360,12 @@
       cursor: pointer;
     }
 
-    .memory-toggle, .metrics-toggle {
-      font-size: 0.75rem;
-      color: #666;
-      cursor: pointer;
-      margin-top: 0.5rem;
-      margin-left: 1rem;
-      text-decoration: underline;
-    }
-    .memory-toggle:hover, .metrics-toggle:hover { color: #999; }
-
-    .metrics-panel {
-      display: none;
-      background: rgba(10, 15, 25, 0.95);
-      border: 1px solid rgba(80, 120, 180, 0.3);
-      border-radius: 8px;
-      padding: 1rem 1.5rem;
-      margin: 0 1.5rem 1rem;
-      max-height: 320px;
-      overflow-y: auto;
-      z-index: 3;
-    }
-    .metrics-panel.open { display: block; }
-    .metrics-panel h4 {
+    .metrics-inner h4 {
       font-size: 0.85rem;
       color: #a0c0ff;
       margin: 1rem 0 0.5rem;
     }
-    .metrics-panel h4:first-child { margin-top: 0; }
+    .metrics-inner h4:first-child { margin-top: 0; }
     .metric-row {
       display: flex;
       align-items: center;
@@ -498,32 +389,12 @@
     .metric-bar.high { background: linear-gradient(90deg, rgba(255, 160, 80, 0.6), rgba(255, 180, 100, 0.8)); }
     .metric-value { font-size: 0.75rem; color: #888; min-width: 3rem; }
 
-    .settings-gear {
-      width: 24px;
-      height: 24px;
-      padding: 0.25rem;
-      margin-left: 0.5rem;
-      cursor: pointer;
-      opacity: 0.6;
-      vertical-align: middle;
+    .settings-panel-inner {
+      max-width: 28rem;
     }
-    .settings-gear:hover { opacity: 1; }
-
-    .settings-modal {
-      display: none;
-      position: fixed;
-      inset: 20%;
-      background: rgba(10, 20, 40, 0.98);
-      border: 1px solid rgba(100, 180, 255, 0.3);
-      border-radius: 12px;
-      flex-direction: column;
-      padding: 1.5rem;
-      z-index: 200;
-    }
-    .settings-modal.open { display: flex; }
-    .settings-modal h4 { color: #a0c8ff; font-size: 0.95rem; margin-bottom: 0.75rem; }
-    .settings-modal label { font-size: 0.85rem; color: #90b0d0; display: block; margin-bottom: 0.25rem; }
-    .settings-modal select {
+    .settings-panel-inner h4 { color: #a0c8ff; font-size: 0.95rem; margin-bottom: 0.75rem; }
+    .settings-panel-inner label { font-size: 0.85rem; color: #90b0d0; display: block; margin-bottom: 0.25rem; }
+    .settings-panel-inner select {
       width: 100%;
       max-width: 400px;
       padding: 0.5rem;
@@ -533,13 +404,13 @@
       color: #c0d8ff;
       font-size: 0.85rem;
     }
-    .settings-modal .settings-actions {
+    .settings-panel-inner .settings-actions {
       display: flex;
       align-items: center;
       gap: 0.75rem;
       margin-top: 0.75rem;
     }
-    .settings-modal .btn-save-settings {
+    .settings-panel-inner .btn-save-settings {
       padding: 0.5rem 1rem;
       background: rgba(80, 160, 100, 0.4);
       border: 1px solid rgba(100, 200, 120, 0.5);
@@ -548,57 +419,62 @@
       cursor: pointer;
       font-size: 0.9rem;
     }
-    .settings-modal .btn-save-settings:hover {
+    .settings-panel-inner .btn-save-settings:hover {
       background: rgba(80, 160, 100, 0.6);
     }
-    .settings-modal .settings-feedback {
+    .settings-panel-inner .settings-feedback {
       font-size: 0.8rem;
       color: #80c090;
     }
-    .settings-modal .close-btn {
-      margin-top: 1rem;
-      padding: 0.4rem 0.8rem;
-      min-height: 44px;
-      background: rgba(80, 140, 255, 0.3);
-      border: 1px solid rgba(100, 160, 255, 0.5);
-      color: #b0d0ff;
-      border-radius: 8px;
-      cursor: pointer;
+    .knowledge-layout {
+      display: grid;
+      grid-template-columns: minmax(10rem, 14rem) 1fr;
+      gap: 1rem;
+      min-height: 12rem;
+      max-width: 56rem;
     }
-
-    .memory-panel {
-      display: none;
-      position: fixed;
-      inset: 0;
-      background: rgba(5, 10, 20, 0.98);
-      z-index: 100;
-      flex-direction: column;
+    @media (max-width: 640px) {
+      .knowledge-layout { grid-template-columns: 1fr; }
     }
-    .memory-panel.open {
-      display: flex;
-    }
-    .memory-panel-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 0.75rem 1.5rem;
-      border-bottom: 1px solid rgba(100, 180, 255, 0.2);
-      flex-shrink: 0;
-    }
-    .memory-panel-header h3 {
-      font-size: 1rem;
-      color: #a0c8ff;
+    .knowledge-topic-list {
+      list-style: none;
       margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
     }
-    .memory-panel-close {
-      background: rgba(80, 100, 140, 0.4);
-      border: 1px solid rgba(100, 160, 255, 0.3);
-      color: #b0d0ff;
-      padding: 0.35rem 0.75rem;
-      border-radius: 6px;
-      cursor: pointer;
+    .knowledge-topic-list button {
       font-family: inherit;
-      font-size: 0.85rem;
+      font-size: 0.8rem;
+      text-align: left;
+      width: 100%;
+      padding: 0.45rem 0.6rem;
+      border-radius: 6px;
+      border: 1px solid rgba(80, 120, 180, 0.35);
+      background: rgba(15, 25, 45, 0.6);
+      color: #a8c4e8;
+      cursor: pointer;
+    }
+    .knowledge-topic-list button:hover,
+    .knowledge-topic-list button.active {
+      border-color: rgba(100, 180, 255, 0.5);
+      background: rgba(40, 70, 120, 0.4);
+      color: #d0e8ff;
+    }
+    .knowledge-content {
+      margin: 0;
+      padding: 1rem;
+      font-size: 0.8rem;
+      line-height: 1.55;
+      color: #b8cce8;
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: rgba(8, 14, 28, 0.85);
+      border: 1px solid rgba(80, 120, 180, 0.3);
+      border-radius: 8px;
+      overflow-y: auto;
+      max-height: min(70vh, 36rem);
     }
     .tag-cloud {
       display: flex;
@@ -627,12 +503,7 @@
       margin-bottom: 0.5rem;
     }
 
-    .memory-panel-close:hover {
-      background: rgba(80, 100, 140, 0.6);
-    }
     #memoryGraphContainer {
-      flex: 1;
-      min-height: 0;
       width: 100%;
     }
     .memory-node-modal {
@@ -704,98 +575,119 @@
       .input-row, .voice-row { max-width: 100%; padding-left: 0.5rem; padding-right: 0.5rem; }
       .chat-bar { padding: 0.75rem 0.75rem max(1rem, env(safe-area-inset-bottom)); }
       .msg { max-width: 95%; font-size: 0.85rem; }
-      .centerpiece { width: min(280px, 90vw); height: min(280px, 90vw); }
+      .side-nav { width: 9rem; padding: 0.5rem 0.35rem; }
+      .nav-item { font-size: 0.72rem; padding: 0.55rem 0.5rem; }
       .toggles { flex-wrap: wrap; }
-      .memory-panel-header { padding: 0.5rem 1rem; }
       .memory-node-modal { inset: 8%; padding: 1rem; }
     }
   </style>
 </head>
 <body>
   <div class="notifications-toast" id="notificationsToast"></div>
-  <div class="app">
-    <div class="centerpiece" aria-hidden="true">
-      <div class="atom">
-        <div class="nucleus"></div>
-        <div class="orbit orbit-1"><div class="electron"></div></div>
-        <div class="orbit orbit-2"><div class="electron"></div><div class="electron"></div></div>
-        <div class="orbit orbit-3"><div class="electron"></div><div class="electron"></div></div>
-      </div>
-    </div>
-
-    <div class="messages" id="messages"></div>
-
-    <div class="metrics-panel" id="metricsPanel">
-      <h4>Internal metrics</h4>
-      <div id="metricsContent"></div>
-    </div>
-    <div class="memory-panel" id="memoryPanel">
-      <div class="memory-panel-header">
-        <h3>Memory & knowledge</h3>
-        <button class="memory-panel-close" id="memoryPanelClose">Close</button>
-      </div>
-      <div id="memoryGraphContainer" class="memory-clouds"></div>
-    </div>
-    <div class="memory-node-modal" id="memoryNodeModal">
-      <h4 id="memoryNodeModalTitle">Node</h4>
-      <div class="content" id="memoryNodeModalContent"></div>
-      <button class="close-btn" id="memoryNodeModalClose">Close</button>
-    </div>
-    <div class="tools-panel" id="toolsPanel">
-      <h4>Suggested (approve to queue)</h4>
-      <div id="toolsSuggested"></div>
-      <h4>Approved (implement in chat)</h4>
-      <div id="toolsApproved"></div>
-      <h4>Implemented</h4>
-      <div id="toolsImplemented"></div>
-      <button class="reload-btn" id="btnReloadTools">Reload tools</button>
-      <button class="reload-btn" id="btnStopSubagents" style="margin-left:0.5rem">Stop all sub-agents</button>
-      <button class="reload-btn" id="btnSuggestTools" style="margin-left:0.5rem">Suggest tools</button>
-      <button class="reload-btn" id="btnImplementTools" style="margin-left:0.5rem">Implement approved tools</button>
-    </div>
-
-    <div class="chat-bar">
-      <div class="input-row">
-        <input type="text" id="textInput" placeholder="Type or use voice..." autocomplete="off" />
-        <button class="btn btn-send" id="btnTypeSend">Send</button>
-      </div>
-      <div class="voice-row">
-        <button class="btn btn-record" id="btnRecord">Record</button>
-        <button class="btn btn-stop" id="btnStop" disabled>Stop</button>
-        <button class="btn btn-send" id="btnSend" disabled>Send</button>
-        <span class="status" id="status">Ready</span>
-      </div>
-      <div class="toggles">
-        <div class="toggle-row">
-          <div class="toggle on" id="toggleTTS"></div>
-          <span>Speak</span>
+  <div class="shell">
+    <nav class="side-nav" aria-label="Sections">
+      <button type="button" class="nav-item active" data-nav="chat">Chat</button>
+      <button type="button" class="nav-item" data-nav="tools">Tools</button>
+      <button type="button" class="nav-item" data-nav="metrics">Metrics</button>
+      <button type="button" class="nav-item" data-nav="memory">Memory</button>
+      <button type="button" class="nav-item" data-nav="knowledge">Knowledge</button>
+      <button type="button" class="nav-item" data-nav="settings">Settings</button>
+    </nav>
+    <div class="main-area">
+      <section id="panel-chat" class="panel active panel-chat-inner">
+        <div class="messages" id="messages"></div>
+        <div class="chat-bar">
+          <div class="input-row">
+            <input type="text" id="textInput" placeholder="Type or use voice..." autocomplete="off" />
+            <button class="btn btn-send" id="btnTypeSend">Send</button>
+          </div>
+          <div class="voice-row">
+            <button class="btn btn-record" id="btnRecord">Record</button>
+            <button class="btn btn-stop" id="btnStop" disabled>Stop</button>
+            <button class="btn btn-send" id="btnSend" disabled>Send</button>
+            <span class="status" id="status">Ready</span>
+          </div>
+          <div class="toggles">
+            <div class="toggle-row">
+              <div class="toggle on" id="toggleTTS"></div>
+              <span>Speak</span>
+            </div>
+            <div class="toggle-row">
+              <div class="toggle on" id="toggleListen"></div>
+              <span>Listen</span>
+            </div>
+          </div>
         </div>
-        <div class="toggle-row">
-          <div class="toggle on" id="toggleListen"></div>
-          <span>Listen</span>
+      </section>
+
+      <section id="panel-tools" class="panel">
+        <div class="panel-header">Tools</div>
+        <div class="panel-body">
+          <div class="tools-inner">
+            <h4>Suggested (approve to queue)</h4>
+            <div id="toolsSuggested"></div>
+            <h4>Approved (implement in chat)</h4>
+            <div id="toolsApproved"></div>
+            <h4>Implemented</h4>
+            <div id="toolsImplemented"></div>
+            <button class="reload-btn" id="btnReloadTools">Reload tools</button>
+            <button class="reload-btn" id="btnStopSubagents" style="margin-left:0.5rem">Stop all sub-agents</button>
+            <button class="reload-btn" id="btnSuggestTools" style="margin-left:0.5rem">Suggest tools</button>
+            <button class="reload-btn" id="btnImplementTools" style="margin-left:0.5rem">Implement approved tools</button>
+          </div>
         </div>
-        <span class="tools-toggle" id="toolsToggle">Tools</span>
-        <span class="toggles-break" aria-hidden="true"></span>
-        <span class="metrics-toggle" id="metricsToggle">Metrics</span>
-        <span class="memory-toggle" id="memoryToggle">Memory & Knowledge</span>
-        <svg class="settings-gear" id="settingsGear" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <path d="M12 15a3 3 0 100-6 3 3 0 000 6z"/>
-          <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/>
-        </svg>
-      </div>
+      </section>
+
+      <section id="panel-metrics" class="panel">
+        <div class="panel-header">Metrics</div>
+        <div class="panel-body">
+          <div class="metrics-inner">
+            <h4>Internal metrics</h4>
+            <div id="metricsContent"></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="panel-memory" class="panel">
+        <div class="panel-header">Memory</div>
+        <div class="panel-body">
+          <div id="memoryGraphContainer" class="memory-clouds"></div>
+        </div>
+      </section>
+
+      <section id="panel-knowledge" class="panel">
+        <div class="panel-header">Knowledge</div>
+        <div class="panel-body">
+          <div class="knowledge-layout">
+            <ul class="knowledge-topic-list" id="knowledgeTopicList" aria-label="Topics"></ul>
+            <pre class="knowledge-content" id="knowledgeContent">Select a topic.</pre>
+          </div>
+        </div>
+      </section>
+
+      <section id="panel-settings" class="panel">
+        <div class="panel-header">Settings</div>
+        <div class="panel-body">
+          <div class="settings-panel-inner">
+            <h4>Voice</h4>
+            <label for="voiceSelect">TTS voice</label>
+            <select id="voiceSelect">
+              <option value="">Loading...</option>
+            </select>
+            <div class="settings-actions">
+              <button class="btn-save-settings" id="btnSaveSettings">Save</button>
+              <span class="settings-feedback" id="settingsFeedback"></span>
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
-    <div class="settings-modal" id="settingsModal">
-      <h4>Settings</h4>
-      <label for="voiceSelect">Voice (TTS)</label>
-      <select id="voiceSelect">
-        <option value="">Loading...</option>
-      </select>
-      <div class="settings-actions">
-        <button class="btn-save-settings" id="btnSaveSettings">Save</button>
-        <span class="settings-feedback" id="settingsFeedback"></span>
-      </div>
-      <button class="close-btn" id="settingsModalClose" style="margin-top:1rem">Close</button>
-    </div>
+  </div>
+
+  <div class="memory-node-modal" id="memoryNodeModal">
+    <h4 id="memoryNodeModalTitle">Node</h4>
+    <div class="content" id="memoryNodeModalContent"></div>
+    <button class="close-btn" id="memoryNodeModalClose">Close</button>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
@@ -996,54 +888,41 @@
       if (e.key === 'Enter') btnTypeSend.click();
     });
 
-    const toolsToggle = document.getElementById('toolsToggle');
     const btnSuggestTools = document.getElementById('btnSuggestTools');
-    const toolsPanel = document.getElementById('toolsPanel');
     const btnReloadTools = document.getElementById('btnReloadTools');
-
-    toolsToggle.addEventListener('click', () => {
-      toolsPanel.classList.toggle('open');
-      memoryPanel.classList.remove('open');
-      metricsPanel.classList.remove('open');
-      if (toolsPanel.classList.contains('open')) loadToolQueue();
-    });
-
-    const memoryToggle = document.getElementById('memoryToggle');
-    const memoryPanel = document.getElementById('memoryPanel');
-    const metricsPanel = document.getElementById('metricsPanel');
-    const memoryPanelClose = document.getElementById('memoryPanelClose');
     const memoryNodeModal = document.getElementById('memoryNodeModal');
     const memoryNodeModalTitle = document.getElementById('memoryNodeModalTitle');
     const memoryNodeModalContent = document.getElementById('memoryNodeModalContent');
     const memoryNodeModalClose = document.getElementById('memoryNodeModalClose');
-
-    const metricsToggle = document.getElementById('metricsToggle');
-    metricsToggle.addEventListener('click', () => {
-      metricsPanel.classList.toggle('open');
-      toolsPanel.classList.remove('open');
-      memoryPanel.classList.remove('open');
-      if (metricsPanel.classList.contains('open')) loadMetricsView();
-    });
-
-    memoryToggle.addEventListener('click', () => {
-      memoryPanel.classList.toggle('open');
-      toolsPanel.classList.remove('open');
-      metricsPanel.classList.remove('open');
-      if (memoryPanel.classList.contains('open')) loadMemoryView();
-    });
-    memoryPanelClose.addEventListener('click', () => memoryPanel.classList.remove('open'));
-    memoryNodeModalClose.addEventListener('click', () => memoryNodeModal.classList.remove('open'));
-    memoryNodeModal.addEventListener('click', (e) => { if (e.target === memoryNodeModal) memoryNodeModal.classList.remove('open'); });
-
-    const settingsGear = document.getElementById('settingsGear');
-    const settingsModal = document.getElementById('settingsModal');
-    const settingsModalClose = document.getElementById('settingsModalClose');
     const voiceSelect = document.getElementById('voiceSelect');
 
     function apiUrl(path) {
-      return new URL(path, window.location.origin + window.location.pathname).href;
+      const p = path.startsWith('/') ? path : '/' + path;
+      return window.location.origin + p;
     }
-    async function loadSettingsModal() {
+
+    function showNavPanel(name) {
+      document.querySelectorAll('.panel').forEach(p => {
+        p.classList.toggle('active', p.id === 'panel-' + name);
+      });
+      document.querySelectorAll('.nav-item').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.nav === name);
+      });
+      if (name === 'tools') loadToolQueue();
+      if (name === 'metrics') loadMetricsView();
+      if (name === 'memory') loadMemoryView();
+      if (name === 'knowledge') loadKnowledgeView();
+      if (name === 'settings') loadSettingsPanel();
+    }
+
+    document.querySelectorAll('.nav-item').forEach(btn => {
+      btn.addEventListener('click', () => showNavPanel(btn.dataset.nav));
+    });
+
+    memoryNodeModalClose.addEventListener('click', () => memoryNodeModal.classList.remove('open'));
+    memoryNodeModal.addEventListener('click', (e) => { if (e.target === memoryNodeModal) memoryNodeModal.classList.remove('open'); });
+
+    async function loadSettingsPanel() {
       voiceSelect.innerHTML = '<option value="">Loading...</option>';
       try {
         const voicesUrl = apiUrl('api/voices');
@@ -1062,13 +941,6 @@
         voiceSelect.innerHTML = '<option value="">Error: ' + (e.message || 'Failed to load') + '</option>';
       }
     }
-
-    settingsGear.addEventListener('click', async () => {
-      settingsModal.classList.add('open');
-      await loadSettingsModal();
-    });
-    settingsModalClose.addEventListener('click', () => settingsModal.classList.remove('open'));
-    settingsModal.addEventListener('click', (e) => { if (e.target === settingsModal) settingsModal.classList.remove('open'); });
 
     const btnSaveSettings = document.getElementById('btnSaveSettings');
     const settingsFeedback = document.getElementById('settingsFeedback');
@@ -1098,7 +970,7 @@
       const el = document.getElementById('metricsContent');
       el.innerHTML = '<p style="color:#888">Loading...</p>';
       try {
-        const r = await fetch('/api/memory-view');
+        const r = await fetch(apiUrl('api/memory-view'));
         const data = await r.json();
         if (!r.ok) throw new Error(data.error || 'Failed to load');
 
@@ -1151,7 +1023,7 @@
       const container = document.getElementById('memoryGraphContainer');
       container.innerHTML = '<p style="color:#888;padding:2rem">Loading…</p>';
       try {
-        const r = await fetch('/api/memory-view');
+        const r = await fetch(apiUrl('api/memory-view'));
         const data = await r.json();
         if (!r.ok) throw new Error(data.error || 'Failed to load');
 
@@ -1212,20 +1084,6 @@
         if (thoughts.length === 0) thCloud.appendChild(cloudTag('Thoughts', 'No background thoughts yet.', 1));
         thSection.appendChild(thCloud);
         container.appendChild(thSection);
-
-        const bio = data.biology || {};
-        const drives = bio.drives || {};
-        const driveSection = document.createElement('div');
-        driveSection.className = 'cloud-section';
-        driveSection.innerHTML = '<h5>Drives</h5>';
-        const driveCloud = document.createElement('div');
-        driveCloud.className = 'tag-cloud';
-        ['connection', 'curiosity', 'usefulness', 'expression'].forEach(d => {
-          const v = ((drives[d] ?? 0) * 100).toFixed(0);
-          driveCloud.appendChild(cloudTag('Drive', d + ': ' + v + '%', (drives[d] ?? 0) >= 0.65 ? 2 : 1));
-        });
-        driveSection.appendChild(driveCloud);
-        container.appendChild(driveSection);
       } catch (err) {
         container.innerHTML = '<p style="color:#c66;padding:2rem">Error: ' + escapeHtml(err.message) + '</p>';
       }
@@ -1236,9 +1094,71 @@
       return div.innerHTML;
     }
 
+    async function loadKnowledgeView() {
+      const list = document.getElementById('knowledgeTopicList');
+      const pre = document.getElementById('knowledgeContent');
+      list.innerHTML = '';
+      const loading = document.createElement('li');
+      loading.style.color = '#888';
+      loading.textContent = 'Loading…';
+      list.appendChild(loading);
+      pre.textContent = 'Select a topic.';
+      try {
+        const r = await fetch(apiUrl('api/knowledge-topics'));
+        let data = {};
+        try {
+          data = await r.json();
+        } catch (_) {
+          throw new Error('Bad response (' + r.status + '). Is the server running the latest app?');
+        }
+        if (!r.ok) {
+          const d = data.detail;
+          const detail = typeof d === 'string' ? d : (Array.isArray(d) && d[0]?.msg) ? d[0].msg : null;
+          throw new Error(data.error || detail || ('HTTP ' + r.status));
+        }
+        const topics = data.topics || [];
+        list.innerHTML = '';
+        if (!topics.length) {
+          const empty = document.createElement('li');
+          empty.style.color = '#888';
+          empty.style.padding = '0.5rem';
+          empty.textContent = 'No knowledge topics yet.';
+          list.appendChild(empty);
+          return;
+        }
+        topics.forEach(topic => {
+          const li = document.createElement('li');
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.textContent = topic;
+          b.addEventListener('click', async () => {
+            list.querySelectorAll('button').forEach(x => x.classList.remove('active'));
+            b.classList.add('active');
+            pre.textContent = 'Loading…';
+            try {
+              const rr = await fetch(apiUrl('api/knowledge-read/' + encodeURIComponent(topic)));
+              const d = await rr.json();
+              pre.textContent = (d.content != null && d.content !== '') ? d.content : '(empty)';
+            } catch (e) {
+              pre.textContent = 'Error: ' + (e.message || 'Failed to read');
+            }
+          });
+          li.appendChild(b);
+          list.appendChild(li);
+        });
+      } catch (err) {
+        list.innerHTML = '';
+        const li = document.createElement('li');
+        li.style.color = '#c66';
+        li.style.padding = '0.5rem';
+        li.textContent = 'Error: ' + (err.message || 'load failed');
+        list.appendChild(li);
+      }
+    }
+
     async function loadToolQueue() {
       try {
-        const r = await fetch('/api/tool-queue');
+        const r = await fetch(apiUrl('api/tool-queue'));
         const q = await r.json();
         renderToolList('toolsSuggested', q.suggested || [], true);
         renderToolList('toolsApproved', q.approved || [], false);
@@ -1270,14 +1190,14 @@
     window.approveTool = async (id) => {
       const fd = new FormData();
       fd.append('tool_id', id);
-      await fetch('/api/tool-approve', { method: 'POST', body: fd });
+      await fetch(apiUrl('api/tool-approve'), { method: 'POST', body: fd });
       loadToolQueue();
     };
 
     window.rejectTool = async (id) => {
       const fd = new FormData();
       fd.append('tool_id', id);
-      await fetch('/api/tool-reject', { method: 'POST', body: fd });
+      await fetch(apiUrl('api/tool-reject'), { method: 'POST', body: fd });
       loadToolQueue();
     };
 
@@ -1293,13 +1213,13 @@
     });
 
     btnReloadTools.addEventListener('click', async () => {
-      await fetch('/api/tool-reload', { method: 'POST' });
+      await fetch(apiUrl('api/tool-reload'), { method: 'POST' });
       btnReloadTools.textContent = 'Reloaded';
       setTimeout(() => { btnReloadTools.textContent = 'Reload tools'; }, 1500);
     });
     const btnStopSubagents = document.getElementById('btnStopSubagents');
     btnStopSubagents.addEventListener('click', async () => {
-      const r = await fetch('/api/subagents-stop-all', { method: 'POST' });
+      const r = await fetch(apiUrl('api/subagents-stop-all'), { method: 'POST' });
       const d = await r.json();
       btnStopSubagents.textContent = d.result || 'Done';
       setTimeout(() => { btnStopSubagents.textContent = 'Stop all sub-agents'; }, 2000);
@@ -1315,7 +1235,7 @@
       setTimeout(() => div.remove(), 8000);
     }
     (function connectNotifications() {
-      const es = new EventSource('/api/notifications/stream');
+      const es = new EventSource(apiUrl('api/notifications/stream'));
       es.onmessage = (e) => {
         try {
           const d = JSON.parse(e.data);
